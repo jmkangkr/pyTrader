@@ -70,15 +70,15 @@ def setup_logger():
     #logging_level = logging.CRITICAL
     #logging_level = logging.ERROR
     #logging_level = logging.WARNING
-    #logging_level = logging.INFO
-    logging_level = logging.DEBUG
+    logging_level = logging.INFO
+    #logging_level = logging.DEBUG
 
     logger.setLevel(logging_level)
 
 
 def valid_date(s):
     try:
-        date_parsed = datetime.datetime.strptime(s, "%Y-%m-%d")
+        date_parsed = datetime.datetime.strptime(s, "%Y%m%d")
     except ValueError:
         return None
 
@@ -105,18 +105,22 @@ def get_login_information():
 
 def preprocess_options():
     start_date = None
+    end_date = None
 
-    for option in sys.argv[1:]:
-        if option == '--help' or option == '-h':
-            print("""\
-usage: {} [-h] [-v] [-s] start_date
+    help = """\
+usage: {} [-h] [-v] [-s] start_date [end_date]
 
 optional arguments:
   -h, --help            show this help message and exit
   -v, --version         show program's version number and exit
-  -s, --login-setup     Creates user login data for easy login
-  start_date            trading start date (format YYYY-MM-DD). If omitted, today is assumed.\
-            """.format(sys.argv[0]))
+  -s, --login-setup     creates user login data for easy login
+  start_date            trading start date (format YYYYMMDD)
+  end_date              trading end date (format YYYYMMDD)\
+            """.format(sys.argv[0])
+
+    for option in sys.argv[1:]:
+        if option == '--help' or option == '-h':
+            print(help)
             exit(0)
         elif option == '--version' or option ==  '-v':
             print("""\
@@ -131,15 +135,18 @@ optional arguments:
             date_parsed = valid_date(option)
             if date_parsed:
                 if start_date:
-                    print("Multiple start dates given.")
-                    exit(0)
+                    end_date = date_parsed
                 else:
                     start_date = date_parsed
             else:
                 print("Not a valid date format.")
                 exit(0)
 
-    return start_date
+    if not start_date or not end_date:
+        print(help)
+        exit(0)
+
+    return (start_date, end_date)
 
 
 class Logger(object):
@@ -162,7 +169,7 @@ class Kernel(Logger):
         self.__runnables = []
 
     def registerRunnable(self, runnable):
-        self.log(Logger.DEBUG, 'Runnable added: {}'.format(runnable))
+        self.log(Logger.DEBUG, 'Adding runnable: {}'.format(runnable))
         self.__runnables.append(runnable)
 
     def run(self):
@@ -237,9 +244,11 @@ class XAMessageQueue(Runnable):
         self.__handlers = {}
 
     def addHandler(self, message, handler):
+        self.log(Logger.DEBUG, 'Registering {} for {}'.format(handler, message))
         self.__handlers[message] = handler
 
     def sendMessage(self, message, parameter):
+        self.log(Logger.INFO, 'sendMessage: {}'.format(message))
         self.__message_queue.put((message, parameter))
 
     def onIdle(self):
@@ -279,17 +288,22 @@ class XAApplication(XAMessageQueue):
             self.__application = application
 
         def OnLogin(self, errorCode, errorDesc):
+            self.log(Logger.INFO, 'OnLogin')
             if errorCode != '0000':
                 self.log(ERROR, "Error {}: {}".format(errorCode, errorDesc))
             self.__application.sendMessage(XAApplication.LOGGED_ON, errorCode == '0000')
 
         def OnLogout(self):
+            self.log(Logger.INFO, 'OnLogout')
             pass
 
         def OnDisconnect(self):
+            self.log(Logger.INFO, 'OnDisconnect')
             pass
 
     def onStarted(self):
+        self.log(Logger.INFO, 'onStarted')
+
         server_addr_demo = "demo.ebestsec.co.kr"
         server_addr_real = "hts.ebestsec.co.kr"
         server_port = 20001
@@ -324,13 +338,13 @@ class XAApplication(XAMessageQueue):
         return True
 
     def onPaused(self):
-        pass
+        self.log(Logger.INFO, 'onPaused')
 
     def onStopped(self):
-        pass
+        self.log(Logger.INFO, 'onStopped')
 
     def onLoggedOn(self, success):
-        self.log(Logger.INFO, 'Logged on with {}'.format(success))
+        self.log(Logger.INFO, 'onLoggedOn')
         if not success:
             print('Login failed')
 
@@ -338,10 +352,10 @@ class XAApplication(XAMessageQueue):
         self.__feeder.startFeed()
 
     def onLoggedOut(self, param):
-        pass
+        self.log(Logger.INFO, 'onLoggedOut')
 
     def onDisconnected(self, param):
-        pass
+        self.log(Logger.INFO, 'onDisconnected')
 
 
 class XADataFeederBase(XAMessageQueue):
@@ -362,11 +376,11 @@ class XADataFeederBase(XAMessageQueue):
             self.__feeder = feeder
 
         def OnReceiveData(self, szTrCode):
-            self.log(Logger.DEBUG, "ReceiveData: szTrCode({})".format(szTrCode))
+            self.log(Logger.DEBUG, "OnReceiveData: szTrCode({})".format(szTrCode))
             self.__feeder.sendMessage(XADataFeederBase.DATA_RECEIVED, szTrCode)
 
         def OnReceiveMessage(self, systemError, messageCode, message):
-            self.log(Logger.DEBUG, "ReceiveMessage: systemError({}), messageCode({}), message({})".format(systemError, messageCode, message))
+            self.log(Logger.DEBUG, "OnReceiveMessage: systemError({}), messageCode({}), message({})".format(systemError, messageCode, message))
 
     def startFeed(self):
         self._state = Runnable.INIT
@@ -401,6 +415,7 @@ class XADataFeederDay(XADataFeederBase):
         self.__xaquery.Request(0)
 
     def translateData(self, param):
+        self.log(Logger.INFO, 'translateData')
         for i in range(0, 1):
             val_date = self.__xaquery.GetFieldData("t1305OutBlock1", "date", i)#날짜
             val_open = self.__xaquery.GetFieldData("t1305OutBlock1", "open", i)#시가
@@ -444,16 +459,13 @@ class MyStrategy(StrategyBase):
 def main():
     setup_logger()
 
-    start_date = preprocess_options()
-
-    if not start_date:
-        start_date = datetime.date.today()
+    (start_date, end_date) = preprocess_options()
 
     kernel = Kernel()
 
     strategy = MyStrategy()
 
-    feeder = XADataFeederDay(strategy, start_date, start_date + datetime.timedelta(days=1), "000150")
+    feeder = XADataFeederDay(strategy, start_date, end_date, "000150")
 
     app = XAApplication(strategy, feeder)
 
