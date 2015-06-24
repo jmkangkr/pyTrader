@@ -32,7 +32,6 @@ NO_OCCURS       = 0
 
 logger          = None
 
-
 def simple_encode(key, clear):
     enc = []
     for i in range(len(clear)):
@@ -55,11 +54,11 @@ def simple_decode(key, enc):
 def setup_logger():
     global logger
 
-    logger = logging.getLogger('default logger')
+    logger = logging.getLogger()
 
-    formatter = logging.Formatter('%(asctime)s (%(levelname)s) %(message)s')
+    formatter = logging.Formatter(fmt='%(asctime)s (%(levelname)s) %(message)s', datefmt='%Y%m%d %H:%M:%S')
 
-    file_handler   = logging.FileHandler('jacuzzi.log')
+    file_handler   = logging.FileHandler('{}.log'.format(os.path.splitext(sys.argv[0])[0]))
     stream_handler = logging.StreamHandler()
 
     file_handler.setFormatter(formatter)
@@ -143,19 +142,33 @@ optional arguments:
     return start_date
 
 
-class Kernel(object):
+class Logger(object):
+    CRITICAL    = logging.CRITICAL
+    ERROR       = logging.ERROR
+    WARN        = logging.WARNING
+    INFO        = logging.INFO
+    DEBUG       = logging.DEBUG
+
+    def __init__(self):
+        super(Logger, self).__init__()
+
+    def log(self, level, message):
+        logger.log(level, '{}: {}'.format(self.__class__.__name__, message))
+
+
+class Kernel(Logger):
     def __init__(self):
         super(Kernel, self).__init__()
         self.__runnables = []
 
     def registerRunnable(self, runnable):
-        logger.info('Runnable added: {}'.format(runnable))
+        self.log(Logger.DEBUG, 'Runnable added: {}'.format(runnable))
         self.__runnables.append(runnable)
 
     def run(self):
         try:
             while len(self.__runnables):
-                #logger.info('Runnable states: {}'.format([r.state for r in self.__runnables]))
+                #self.log(Logger.DEBUG, 'Runnable states: {}'.format([r.state for r in self.__runnables]))
                 for runnable in list(self.__runnables):
                     if      runnable.state  ==  Runnable.INIT:
 
@@ -182,7 +195,7 @@ class Kernel(object):
             exit(0)
 
 
-class Runnable(object):
+class Runnable(Logger):
     INIT            = 0
     RUNNING         = 1
     PAUSED          = 2
@@ -235,7 +248,7 @@ class XAMessageQueue(Runnable):
     def run(self):
         try:
             (message, parameter) = self.__message_queue.get(False)
-            logger.debug('Messaged received: {}({})'.format(message, parameter))
+            self.log(Logger.DEBUG, 'Message received: {}({})'.format(message, parameter))
             self.__handlers[message](self, parameter)
         except Empty:
             return False
@@ -257,7 +270,7 @@ class XAApplication(XAMessageQueue):
         self.addHandler(XAApplication.LOGGED_OUT, XAApplication.onLoggedOut)
         self.addHandler(XAApplication.DISCONNECTED, XAApplication.onDisconnected)
 
-    class XASessionEvents(object):
+    class XASessionEvents(Logger):
         def __init__(self):
             super(XAApplication.XASessionEvents, self).__init__()
             self.__application = None
@@ -267,7 +280,7 @@ class XAApplication(XAMessageQueue):
 
         def OnLogin(self, errorCode, errorDesc):
             if errorCode != '0000':
-                logger.error("Error {}: {}".format(errorCode, errorDesc))
+                self.log(ERROR, "Error {}: {}".format(errorCode, errorDesc))
             self.__application.sendMessage(XAApplication.LOGGED_ON, errorCode == '0000')
 
         def OnLogout(self):
@@ -317,7 +330,7 @@ class XAApplication(XAMessageQueue):
         pass
 
     def onLoggedOn(self, success):
-        logging.info('Logged on with {}'.format(success))
+        self.log(Logger.INFO, 'Logged on with {}'.format(success))
         if not success:
             print('Login failed')
 
@@ -341,7 +354,7 @@ class XADataFeederBase(XAMessageQueue):
 
         self.addHandler(XADataFeederBase.DATA_RECEIVED, XADataFeederBase.onDataReceived)
 
-    class XAQueryEvents(object):
+    class XAQueryEvents(Logger):
         def __init__(self):
             super(XADataFeederBase.XAQueryEvents, self).__init__()
 
@@ -349,11 +362,11 @@ class XADataFeederBase(XAMessageQueue):
             self.__feeder = feeder
 
         def OnReceiveData(self, szTrCode):
-            logger.debug("ReceiveData: szTrCode({})".format(szTrCode))
+            self.log(Logger.DEBUG, "ReceiveData: szTrCode({})".format(szTrCode))
             self.__feeder.sendMessage(XADataFeederBase.DATA_RECEIVED, szTrCode)
 
         def OnReceiveMessage(self, systemError, messageCode, message):
-            logger.debug("ReceiveMessage: systemError({}), messageCode({}), message({})".format(systemError, messageCode, message))
+            self.log(Logger.DEBUG, "ReceiveMessage: systemError({}), messageCode({}), message({})".format(systemError, messageCode, message))
 
     def startFeed(self):
         self._state = Runnable.INIT
@@ -370,26 +383,43 @@ class XADataFeederBase(XAMessageQueue):
 
 
 class XADataFeederDay(XADataFeederBase):
-    def __init__(self, strategy, start_date):
+    def __init__(self, strategy, start_date, end_date, stock_code):
         super(XADataFeederDay, self).__init__(strategy)
         self.__start_date = start_date
+        self.__end_date = end_date
+        self.__stock_code = stock_code
         self.__xaquery = None
 
     def onStarted(self):
-        logging.info('onStarted')
+        self.log(Logger.INFO, 'onStarted')
         self.__xaquery = win32com.client.DispatchWithEvents("XA_DataSet.XAQuery", XADataFeederBase.XAQueryEvents)
         self.__xaquery.postInitialize(self)
-        self.__xaquery.LoadFromResFile(os.path.join(RES_DIRECTORY, 't1102.res'))
-        self.__xaquery.SetFieldData('t1102InBlock', 'shcode', NO_OCCURS, '000150')
+        self.__xaquery.LoadFromResFile("\Res\\t1305.res")
+        self.__xaquery.SetFieldData('t1305InBlock', 'shcode', NO_OCCURS, self.__stock_code)
+        self.__xaquery.SetFieldData('t1305InBlock', 'dwmcode', NO_OCCURS, 1)
+        self.__xaquery.SetFieldData('t1305InBlock', 'cnt', NO_OCCURS, 1)
         self.__xaquery.Request(0)
 
     def translateData(self, param):
-        name = self.__xaquery.GetFieldData('t1102OutBlock', 'hname', 0)
-        price = self.__xaquery.GetFieldData('t1102OutBlock', 'price', 0)
-        return (name, price)
+        for i in range(0, 1):
+            val_date = self.__xaquery.GetFieldData("t1305OutBlock1", "date", i)#날짜
+            val_open = self.__xaquery.GetFieldData("t1305OutBlock1", "open", i)#시가
+            val_high = self.__xaquery.GetFieldData("t1305OutBlock1", "high", i)#고가
+            val_low = self.__xaquery.GetFieldData("t1305OutBlock1", "low", i) #저가
+            val_close = self.__xaquery.GetFieldData("t1305OutBlock1", "close", i) # 종가
+            val_sign = self.__xaquery.GetFieldData("t1305OutBlock1", "sign", i)# 1 = 상한 , 2 - 상승 ,3- 보합 ,4-하락 , 5 = 하한
+            val_diff = self.__xaquery.GetFieldData("t1305OutBlock1", "diff", i) # 등락률
+            val_quant = self.__xaquery.GetFieldData("t1305OutBlock1", "volume", i)# 거래량
+            val_quant_chg = self.__xaquery.GetFieldData("t1305OutBlock1", "diff_vol", i)# 거래량 변화율
+            val_f_buy = self.__xaquery.GetFieldData("t1305OutBlock1", "fpvolume", i)# 외국인 순매수
+            val_co_buy = self.__xaquery.GetFieldData("t1305OutBlock1", "covolume", i)# 기관 순매수
+            val_pp_buy = self.__xaquery.GetFieldData("t1305OutBlock1", "ppvolume", i)# 개인 순매수
+            val_total_value = self.__xaquery.GetFieldData("t1305OutBlock1", "marketcap", i)# 시가총액
+
+        return (val_date, val_open, val_high, val_low, val_close)
 
 
-class StrategyBase():
+class StrategyBase(Logger):
     def __init__(self):
         super(StrategyBase, self).__init__()
 
@@ -404,12 +434,12 @@ class MyStrategy(StrategyBase):
         super(MyStrategy, self).__init__()
 
     def onTradeStart(self):
-        logging.info('onTradeStart')
+        self.log(Logger.INFO, 'onTradeStart')
 
     def onBar(self, param):
-        logging.info('onBar')
-        (name, price) = param
-        print('{}: {}'.format(name, price))
+        self.log(Logger.INFO, 'onBar')
+        (val_date, val_open, val_high, val_low, val_close) = param
+        print('{}: {}, {}, {}, {}'.format(val_date, val_open, val_high, val_low, val_close))
 
 def main():
     setup_logger()
@@ -423,7 +453,7 @@ def main():
 
     strategy = MyStrategy()
 
-    feeder = XADataFeederDay(strategy, start_date)
+    feeder = XADataFeederDay(strategy, start_date, start_date + datetime.timedelta(days=1), "000150")
 
     app = XAApplication(strategy, feeder)
 
