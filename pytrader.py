@@ -22,6 +22,7 @@ import logging
 import sys
 import datetime
 import os
+import sqlite3
 
 
 VERSION = (0, 0)
@@ -70,8 +71,8 @@ def setup_logger():
     #logging_level = logging.CRITICAL
     #logging_level = logging.ERROR
     #logging_level = logging.WARNING
-    logging_level = logging.INFO
-    #logging_level = logging.DEBUG
+    #logging_level = logging.INFO
+    logging_level = logging.DEBUG
 
     logger.setLevel(logging_level)
 
@@ -163,9 +164,9 @@ class Logger(object):
         logger.log(level, '{}: {}'.format(self.__class__.__name__, message))
 
 
-class Kernel(Logger):
+class Scheduler(Logger):
     def __init__(self):
-        super(Kernel, self).__init__()
+        super(Scheduler, self).__init__()
         self.__runnables = []
 
     def registerRunnable(self, runnable):
@@ -411,12 +412,12 @@ class XADataFeederDay(XADataFeederBase):
         self.__xaquery.LoadFromResFile("\Res\\t1305.res")
         self.__xaquery.SetFieldData('t1305InBlock', 'shcode', NO_OCCURS, self.__stock_code)
         self.__xaquery.SetFieldData('t1305InBlock', 'dwmcode', NO_OCCURS, 1)
-        self.__xaquery.SetFieldData('t1305InBlock', 'cnt', NO_OCCURS, 1)
+        self.__xaquery.SetFieldData('t1305InBlock', 'cnt', NO_OCCURS, 1500)
         self.__xaquery.Request(0)
 
     def translateData(self, param):
         self.log(Logger.INFO, 'translateData')
-        for i in range(0, 1):
+        for i in range(0, 1500):
             val_date = self.__xaquery.GetFieldData("t1305OutBlock1", "date", i)#날짜
             val_open = self.__xaquery.GetFieldData("t1305OutBlock1", "open", i)#시가
             val_high = self.__xaquery.GetFieldData("t1305OutBlock1", "high", i)#고가
@@ -456,12 +457,13 @@ class MyStrategy(StrategyBase):
         (val_date, val_open, val_high, val_low, val_close) = param
         print('{}: {}, {}, {}, {}'.format(val_date, val_open, val_high, val_low, val_close))
 
+
 def main():
     setup_logger()
 
     (start_date, end_date) = preprocess_options()
 
-    kernel = Kernel()
+    sched = Scheduler()
 
     strategy = MyStrategy()
 
@@ -469,10 +471,10 @@ def main():
 
     app = XAApplication(strategy, feeder)
 
-    kernel.registerRunnable(app)
-    kernel.registerRunnable(feeder)
+    sched.registerRunnable(app)
+    sched.registerRunnable(feeder)
 
-    kernel.run()
+    sched.run()
 
 if __name__ == "__main__":
     main()
