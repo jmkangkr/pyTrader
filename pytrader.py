@@ -349,6 +349,13 @@ class XAApplication(XAMessageQueue):
         if not success:
             print('Login failed')
 
+
+        db = XADatabaseDay()
+
+        db._updateDatabase()
+
+        exit(0)
+
         self.__strategy.onTradeStart()
         self.__feeder.startFeed()
 
@@ -404,35 +411,108 @@ class XADataFeederDay(XADataFeederBase):
         self.__end_date = end_date
         self.__stock_code = stock_code
         self.__xaquery = None
+        self.__conn = None
+        self.__cur = None
+
+    def _checkDatabase(self):
+        db_name = '{}.db'.format(os.path.splitext(sys.argv[0])[0])
+        return os.path.isfile(db_name)
+
+    def _openDatabase(self):
+        db_name = '{}.db'.format(os.path.splitext(sys.argv[0])[0])
+        self.__conn = sqlite3.connect(db_name)
+        self.__cur = self.__conn.cursor()
+
+    def _createDatabase(self):
+        db_name = '{}.db'.format(os.path.splitext(sys.argv[0])[0])
+        self.__conn = sqlite3.connect(db_name)
+        self.__cur = self.__conn.cursor()
+
+        sqlcommand = "CREATE TABLE t1305 "                 \
+                               "(date            TEXT,    "\
+                                "open            INTEGER, "\
+                                "high            INTEGER, "\
+                                "low             INTEGER, "\
+                                "close           INTEGER, "\
+                                "sign            TEXT,    "\
+                                "change          INTEGER, "\
+                                "diff            REAL,    "\
+                                "volume          INTEGER, "\
+                                "diff_vol        REAL,    "\
+                                "chdegree        REAL,    "\
+                                "sojinrate       REAL,    "\
+                                "changerate      REAL,    "\
+                                "fpvolume        INTEGER, "\
+                                "covolume        INTEGER, "\
+                                "shcode          TEXT,    "\
+                                "value           INTEGER, "\
+                                "ppvolume        INTEGER, "\
+                                "o_sign          TEXT,    "\
+                                "o_change        INTEGER, "\
+                                "o_diff          REAL,    "\
+                                "h_sign          TEXT,    "\
+                                "h_change        INTEGER, "\
+                                "h_diff          REAL,    "\
+                                "l_sign          TEXT,    "\
+                                "l_change        INTEGER, "\
+                                "l_diff          REAL,    "\
+                                "marketcap       INTEGER) "
+
+        self.__cur.execute(sqlcommand)
+        self.__conn.commit()
+        self.__conn.close()
 
     def onStarted(self):
         self.log(Logger.INFO, 'onStarted')
+
+        if not self._checkDatabase():
+            self._createDatabase()
+        else:
+            self._openDatabase()
+
         self.__xaquery = win32com.client.DispatchWithEvents("XA_DataSet.XAQuery", XADataFeederBase.XAQueryEvents)
         self.__xaquery.postInitialize(self)
-        self.__xaquery.LoadFromResFile("\Res\\t1305.res")
+        self.__xaquery.LoadFromResFile(os.path.join(RES_DIRECTORY, 't1305.res'))
         self.__xaquery.SetFieldData('t1305InBlock', 'shcode', NO_OCCURS, self.__stock_code)
         self.__xaquery.SetFieldData('t1305InBlock', 'dwmcode', NO_OCCURS, 1)
-        self.__xaquery.SetFieldData('t1305InBlock', 'cnt', NO_OCCURS, 1500)
+        self.__xaquery.SetFieldData('t1305InBlock', 'cnt', NO_OCCURS, (self.__end_date - self.__start_date).TotalDays)
         self.__xaquery.Request(0)
 
     def translateData(self, param):
         self.log(Logger.INFO, 'translateData')
-        for i in range(0, 1500):
-            val_date = self.__xaquery.GetFieldData("t1305OutBlock1", "date", i)#날짜
-            val_open = self.__xaquery.GetFieldData("t1305OutBlock1", "open", i)#시가
-            val_high = self.__xaquery.GetFieldData("t1305OutBlock1", "high", i)#고가
-            val_low = self.__xaquery.GetFieldData("t1305OutBlock1", "low", i) #저가
-            val_close = self.__xaquery.GetFieldData("t1305OutBlock1", "close", i) # 종가
-            val_sign = self.__xaquery.GetFieldData("t1305OutBlock1", "sign", i)# 1 = 상한 , 2 - 상승 ,3- 보합 ,4-하락 , 5 = 하한
-            val_diff = self.__xaquery.GetFieldData("t1305OutBlock1", "diff", i) # 등락률
-            val_quant = self.__xaquery.GetFieldData("t1305OutBlock1", "volume", i)# 거래량
-            val_quant_chg = self.__xaquery.GetFieldData("t1305OutBlock1", "diff_vol", i)# 거래량 변화율
-            val_f_buy = self.__xaquery.GetFieldData("t1305OutBlock1", "fpvolume", i)# 외국인 순매수
-            val_co_buy = self.__xaquery.GetFieldData("t1305OutBlock1", "covolume", i)# 기관 순매수
-            val_pp_buy = self.__xaquery.GetFieldData("t1305OutBlock1", "ppvolume", i)# 개인 순매수
-            val_total_value = self.__xaquery.GetFieldData("t1305OutBlock1", "marketcap", i)# 시가총액
 
-        return (val_date, val_open, val_high, val_low, val_close)
+        print('Total days: {}'.format((self.__end_date - self.__start_date).TotalDays))
+        for i in range(0, (self.__end_date - self.__start_date).TotalDays):
+            date            = self.__xaquery.GetFieldData("t1305OutBlock1", "date",       i)
+            open            = self.__xaquery.GetFieldData("t1305OutBlock1", "open",       i)
+            high            = self.__xaquery.GetFieldData("t1305OutBlock1", "high",       i)
+            low             = self.__xaquery.GetFieldData("t1305OutBlock1", "low",        i)
+            close           = self.__xaquery.GetFieldData("t1305OutBlock1", "close",      i)
+            sign            = self.__xaquery.GetFieldData("t1305OutBlock1", "sign",       i)
+            change          = self.__xaquery.GetFieldData("t1305OutBlock1", "change",     i)
+            diff            = self.__xaquery.GetFieldData("t1305OutBlock1", "diff",       i)
+            volume          = self.__xaquery.GetFieldData("t1305OutBlock1", "volume",     i)
+            diff_vol        = self.__xaquery.GetFieldData("t1305OutBlock1", "diff_vol",   i)
+            chdegree        = self.__xaquery.GetFieldData("t1305OutBlock1", "chdegree",   i)
+            sojinrate       = self.__xaquery.GetFieldData("t1305OutBlock1", "sojinrate",  i)
+            changerate      = self.__xaquery.GetFieldData("t1305OutBlock1", "changerate", i)
+            fpvolume        = self.__xaquery.GetFieldData("t1305OutBlock1", "fpvolume",   i)
+            covolume        = self.__xaquery.GetFieldData("t1305OutBlock1", "covolume",   i)
+            shcode          = self.__xaquery.GetFieldData("t1305OutBlock1", "shcode",     i)
+            value           = self.__xaquery.GetFieldData("t1305OutBlock1", "value",      i)
+            ppvolume        = self.__xaquery.GetFieldData("t1305OutBlock1", "ppvolume",   i)
+            o_sign          = self.__xaquery.GetFieldData("t1305OutBlock1", "o_sign",     i)
+            o_change        = self.__xaquery.GetFieldData("t1305OutBlock1", "o_change",   i)
+            o_diff          = self.__xaquery.GetFieldData("t1305OutBlock1", "o_diff",     i)
+            h_sign          = self.__xaquery.GetFieldData("t1305OutBlock1", "h_sign",     i)
+            h_change        = self.__xaquery.GetFieldData("t1305OutBlock1", "h_change",   i)
+            h_diff          = self.__xaquery.GetFieldData("t1305OutBlock1", "h_diff",     i)
+            l_sign          = self.__xaquery.GetFieldData("t1305OutBlock1", "l_sign",     i)
+            l_change        = self.__xaquery.GetFieldData("t1305OutBlock1", "l_change",   i)
+            l_diff          = self.__xaquery.GetFieldData("t1305OutBlock1", "l_diff",     i)
+            marketcap       = self.__xaquery.GetFieldData("t1305OutBlock1", "marketcap",  i)
+
+        return (date, open, high, low, close)
 
 
 class StrategyBase(Logger):
@@ -456,6 +536,197 @@ class MyStrategy(StrategyBase):
         self.log(Logger.INFO, 'onBar')
         (val_date, val_open, val_high, val_low, val_close) = param
         print('{}: {}, {}, {}, {}'.format(val_date, val_open, val_high, val_low, val_close))
+
+
+class XADatabaseDay(Logger):
+    BEGINNING = datetime.date(2000, 1, 1)
+    STOCK_CODE = "000150"
+
+    def __init__(self):
+        super(XADatabaseDay, self).__init__()
+        self.__xaquery = None
+
+    class XAQueryEvents(Logger):
+        def __init__(self):
+            super(XADatabaseDay.XAQueryEvents, self).__init__()
+            self.ondata = False
+
+        def OnReceiveData(self, szTrCode):
+            self.log(Logger.DEBUG, "OnReceiveData: szTrCode({})".format(szTrCode))
+            self.ondata = True
+
+        def OnReceiveMessage(self, systemError, messageCode, message):
+            self.log(Logger.DEBUG, "OnReceiveMessage: systemError({}), messageCode({}), message({})".format(systemError, messageCode, message))
+
+    def _checkDatabase(self):
+        db_name = '{}.db'.format(os.path.splitext(sys.argv[0])[0])
+        return os.path.isfile(db_name)
+
+    def _openDatabase(self):
+        db_name = '{}.db'.format(os.path.splitext(sys.argv[0])[0])
+        self.__conn = sqlite3.connect(db_name)
+        self.__cur = self.__conn.cursor()
+
+    def _createDatabase(self):
+        db_name = '{}.db'.format(os.path.splitext(sys.argv[0])[0])
+        self.__conn = sqlite3.connect(db_name)
+        self.__cur = self.__conn.cursor()
+
+        sqlcommand = "CREATE TABLE t1305_{} ("                       \
+                                "date            TEXT     UNIQUE,   "\
+                                "open            INTEGER,           "\
+                                "high            INTEGER,           "\
+                                "low             INTEGER,           "\
+                                "close           INTEGER,           "\
+                                "sign            TEXT,              "\
+                                "change          INTEGER,           "\
+                                "diff            REAL,              "\
+                                "volume          INTEGER,           "\
+                                "diff_vol        REAL,              "\
+                                "chdegree        REAL,              "\
+                                "sojinrate       REAL,              "\
+                                "changerate      REAL,              "\
+                                "fpvolume        INTEGER,           "\
+                                "covolume        INTEGER,           "\
+                                "shcode          TEXT,              "\
+                                "value           INTEGER,           "\
+                                "ppvolume        INTEGER,           "\
+                                "o_sign          TEXT,              "\
+                                "o_change        INTEGER,           "\
+                                "o_diff          REAL,              "\
+                                "h_sign          TEXT,              "\
+                                "h_change        INTEGER,           "\
+                                "h_diff          REAL,              "\
+                                "l_sign          TEXT,              "\
+                                "l_change        INTEGER,           "\
+                                "l_diff          REAL,              "\
+                                "marketcap       INTEGER            "\
+                                                       ")".format(XADatabaseDay.STOCK_CODE)
+
+        self.__cur.execute(sqlcommand)
+        self.__conn.commit()
+
+    def _updateDatabase(self):
+        today           = datetime.date.today()
+        days_to_request = (today - XADatabaseDay.BEGINNING).days
+
+        if not self._checkDatabase():
+            print('createDatabase')
+            self._createDatabase()
+        else:
+            self._openDatabase()
+
+        self.__xaquery = win32com.client.DispatchWithEvents("XA_DataSet.XAQuery", XADatabaseDay.XAQueryEvents)
+        self.__xaquery.LoadFromResFile(os.path.join(RES_DIRECTORY, 't1305.res'))
+        self.__xaquery.SetFieldData('t1305InBlock', 'shcode', NO_OCCURS, XADatabaseDay.STOCK_CODE)
+        self.__xaquery.SetFieldData('t1305InBlock', 'dwmcode', NO_OCCURS, 1)
+        self.__xaquery.SetFieldData('t1305InBlock', 'cnt', NO_OCCURS, days_to_request)
+        self.__xaquery.Request(0)
+        print('request done')
+
+        while not self.__xaquery.ondata:
+            pythoncom.PumpWaitingMessages()
+
+        print('received')
+        for i in range(0, days_to_request):
+            val_date            = self.__xaquery.GetFieldData("t1305OutBlock1", "date",       i)
+            val_open            = self.__xaquery.GetFieldData("t1305OutBlock1", "open",       i)
+            val_high            = self.__xaquery.GetFieldData("t1305OutBlock1", "high",       i)
+            val_low             = self.__xaquery.GetFieldData("t1305OutBlock1", "low",        i)
+            val_close           = self.__xaquery.GetFieldData("t1305OutBlock1", "close",      i)
+            val_sign            = self.__xaquery.GetFieldData("t1305OutBlock1", "sign",       i)
+            val_change          = self.__xaquery.GetFieldData("t1305OutBlock1", "change",     i)
+            val_diff            = self.__xaquery.GetFieldData("t1305OutBlock1", "diff",       i)
+            val_volume          = self.__xaquery.GetFieldData("t1305OutBlock1", "volume",     i)
+            val_diff_vol        = self.__xaquery.GetFieldData("t1305OutBlock1", "diff_vol",   i)
+            val_chdegree        = self.__xaquery.GetFieldData("t1305OutBlock1", "chdegree",   i)
+            val_sojinrate       = self.__xaquery.GetFieldData("t1305OutBlock1", "sojinrate",  i)
+            val_changerate      = self.__xaquery.GetFieldData("t1305OutBlock1", "changerate", i)
+            val_fpvolume        = self.__xaquery.GetFieldData("t1305OutBlock1", "fpvolume",   i)
+            val_covolume        = self.__xaquery.GetFieldData("t1305OutBlock1", "covolume",   i)
+            val_shcode          = self.__xaquery.GetFieldData("t1305OutBlock1", "shcode",     i)
+            val_value           = self.__xaquery.GetFieldData("t1305OutBlock1", "value",      i)
+            val_ppvolume        = self.__xaquery.GetFieldData("t1305OutBlock1", "ppvolume",   i)
+            val_o_sign          = self.__xaquery.GetFieldData("t1305OutBlock1", "o_sign",     i)
+            val_o_change        = self.__xaquery.GetFieldData("t1305OutBlock1", "o_change",   i)
+            val_o_diff          = self.__xaquery.GetFieldData("t1305OutBlock1", "o_diff",     i)
+            val_h_sign          = self.__xaquery.GetFieldData("t1305OutBlock1", "h_sign",     i)
+            val_h_change        = self.__xaquery.GetFieldData("t1305OutBlock1", "h_change",   i)
+            val_h_diff          = self.__xaquery.GetFieldData("t1305OutBlock1", "h_diff",     i)
+            val_l_sign          = self.__xaquery.GetFieldData("t1305OutBlock1", "l_sign",     i)
+            val_l_change        = self.__xaquery.GetFieldData("t1305OutBlock1", "l_change",   i)
+            val_l_diff          = self.__xaquery.GetFieldData("t1305OutBlock1", "l_diff",     i)
+            val_marketcap       = self.__xaquery.GetFieldData("t1305OutBlock1", "marketcap",  i)
+
+            print('{}'.format(val_date))
+
+            date = datetime.datetime.strptime(val_date, "%Y%m%d").date()
+
+            if date >= XADatabaseDay.BEGINNING:
+                sqlcommand = "INSERT OR IGNORE INTO t1305_{} ("             \
+                                    "date, "        \
+                                    "open, "        \
+                                    "high, "        \
+                                    "low, "         \
+                                    "close, "       \
+                                    "sign, "        \
+                                    "change, "      \
+                                    "diff, "        \
+                                    "volume, "      \
+                                    "diff_vol, "    \
+                                    "chdegree, "    \
+                                    "sojinrate, "   \
+                                    "changerate, "  \
+                                    "fpvolume, "    \
+                                    "covolume, "    \
+                                    "shcode, "      \
+                                    "value, "       \
+                                    "ppvolume, "    \
+                                    "o_sign, "      \
+                                    "o_change, "    \
+                                    "o_diff, "      \
+                                    "h_sign, "      \
+                                    "h_change, "    \
+                                    "h_diff, "      \
+                                    "l_sign, "      \
+                                    "l_change, "    \
+                                    "l_diff, "      \
+                                    "marketcap"     \
+                                    ") VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})".format(
+                                     XADatabaseDay.STOCK_CODE,
+                                     val_date,
+                                     val_open,
+                                     val_high,
+                                     val_low,
+                                     val_close,
+                                     val_sign,
+                                     val_change,
+                                     val_diff,
+                                     val_volume,
+                                     val_diff_vol,
+                                     val_chdegree,
+                                     val_sojinrate,
+                                     val_changerate,
+                                     val_fpvolume,
+                                     val_covolume,
+                                     val_shcode,
+                                     val_value,
+                                     val_ppvolume,
+                                     val_o_sign,
+                                     val_o_change,
+                                     val_o_diff,
+                                     val_h_sign,
+                                     val_h_change,
+                                     val_h_diff,
+                                     val_l_sign,
+                                     val_l_change,
+                                     val_l_diff,
+                                     val_marketcap)
+
+                print(sqlcommand)
+                self.__cur.execute(sqlcommand)
+
+            self.__conn.commit()
 
 
 def main():
