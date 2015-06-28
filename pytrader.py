@@ -23,6 +23,8 @@ import sys
 import datetime
 import os
 import sqlite3
+import threading
+import time
 
 
 VERSION = (0, 0)
@@ -71,8 +73,8 @@ def setup_logger():
     #logging_level = logging.CRITICAL
     #logging_level = logging.ERROR
     #logging_level = logging.WARNING
-    #logging_level = logging.INFO
-    logging_level = logging.DEBUG
+    logging_level = logging.INFO
+    #logging_level = logging.DEBUG
 
     logger.setLevel(logging_level)
 
@@ -346,15 +348,14 @@ class XAApplication(XAMessageQueue):
 
     def onLoggedOn(self, success):
         self.log(Logger.INFO, 'onLoggedOn')
-        if not success:
-            print('Login failed')
 
+        if not success:
+            self.error('Login failed')
+            return
 
         db = XADatabaseDay()
 
-        db._updateDatabase()
-
-        exit(0)
+        db.updateDatabase()
 
         self.__strategy.onTradeStart()
         self.__feeder.startFeed()
@@ -538,29 +539,203 @@ class MyStrategy(StrategyBase):
         print('{}: {}, {}, {}, {}'.format(val_date, val_open, val_high, val_low, val_close))
 
 
+class XAData_t1305(object):
+    def __init__(self, data_set):
+        super(XAData_t1305, self).__init__()
+        (date, open, high, low, close, sign, change, diff, volume, diff_vol, chdegree, sojinrate, changerate, fpvolume, covolume, shcode, value, ppvolume, o_sign, o_change, o_diff, h_sign, h_change, h_diff, l_sign, l_change, l_diff, marketcap) = data_set
+        self.__val_date            = date
+        self.__val_open            = open
+        self.__val_high            = high
+        self.__val_low             = low
+        self.__val_close           = close
+        self.__val_sign            = sign
+        self.__val_change          = change
+        self.__val_diff            = diff
+        self.__val_volume          = volume
+        self.__val_diff_vol        = diff_vol
+        self.__val_chdegree        = chdegree
+        self.__val_sojinrate       = sojinrate
+        self.__val_changerate      = changerate
+        self.__val_fpvolume        = fpvolume
+        self.__val_covolume        = covolume
+        self.__val_shcode          = shcode
+        self.__val_value           = value
+        self.__val_ppvolume        = ppvolume
+        self.__val_o_sign          = o_sign
+        self.__val_o_change        = o_change
+        self.__val_o_diff          = o_diff
+        self.__val_h_sign          = h_sign
+        self.__val_h_change        = h_change
+        self.__val_h_diff          = h_diff
+        self.__val_l_sign          = l_sign
+        self.__val_l_change        = l_change
+        self.__val_l_diff          = l_diff
+        self.__val_marketcap       = marketcap
+
+    def __str__(self):
+        return "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(self.__val_date, self.__val_open, self.__val_high, self.__val_low, self.__val_close, self.__val_sign, self.__val_change, self.__val_diff, self.__val_volume, self.__val_diff_vol, self.__val_chdegree, self.__val_sojinrate, self.__val_changerate, self.__val_fpvolume, self.__val_covolume, self.__val_shcode, self.__val_value, self.__val_ppvolume, self.__val_o_sign, self.__val_o_change, self.__val_o_diff, self.__val_h_sign, self.__val_h_change, self.__val_h_diff, self.__val_l_sign, self.__val_l_change, self.__val_l_diff, self.__val_marketcap)
+
+    @property
+    def date(self):
+        return self.__val_date
+
+    @property
+    def open(self):
+        return self.__val_open
+
+    @property
+    def high(self):
+        return self.__val_high
+
+    @property
+    def low(self):
+        return self.__val_low
+
+    @property
+    def close(self):
+        return self.__val_close
+
+    @property
+    def sign(self):
+        return self.__val_sign
+
+    @property
+    def change(self):
+        return self.__val_change
+
+    @property
+    def diff(self):
+        return self.__val_diff
+
+    @property
+    def volume(self):
+        return self.__val_volume
+
+    @property
+    def diff_vol(self):
+        return self.__val_diff_vol
+
+    @property
+    def chdegree(self):
+        return self.__val_chdegree
+
+    @property
+    def sojinrate(self):
+        return self.__val_sojinrate
+
+    @property
+    def changerate(self):
+        return self.__val_changerate
+
+    @property
+    def fpvolume(self):
+        return self.__val_fpvolume
+
+    @property
+    def covolume(self):
+        return self.__val_covolume
+
+    @property
+    def shcode(self):
+        return self.__val_shcode
+
+    @property
+    def value(self):
+        return self.__val_value
+
+    @property
+    def ppvolume(self):
+        return self.__val_ppvolume
+
+    @property
+    def o_sign(self):
+        return self.__val_o_sign
+
+    @property
+    def o_change(self):
+        return self.__val_o_change
+
+    @property
+    def o_diff(self):
+        return self.__val_o_diff
+
+    @property
+    def h_sign(self):
+        return self.__val_h_sign
+
+    @property
+    def h_change(self):
+        return self.__val_h_change
+
+    @property
+    def h_diff(self):
+        return self.__val_h_diff
+
+    @property
+    def l_sign(self):
+        return self.__val_l_sign
+
+    @property
+    def l_change(self):
+        return self.__val_l_change
+
+    @property
+    def l_diff(self):
+        return self.__val_l_diff
+
+    @property
+    def marketcap(self):
+        return self.__val_marketcap
+
+
 class XADatabaseDay(Logger):
-    BEGINNING = datetime.date(2000, 1, 1)
+    BEGINNING = datetime.date(2008, 1, 1)
     STOCK_CODE = "000150"
 
     def __init__(self):
         super(XADatabaseDay, self).__init__()
         self.__xaquery = None
 
+
     class XAQueryEvents(Logger):
         def __init__(self):
             super(XADatabaseDay.XAQueryEvents, self).__init__()
-            self.ondata = False
+            self.__signal = threading.Semaphore()
+
+        def postInitialize(self):
+            self.__signal.acquire(True)
 
         def OnReceiveData(self, szTrCode):
             self.log(Logger.DEBUG, "OnReceiveData: szTrCode({})".format(szTrCode))
-            self.ondata = True
+            self.__signal.release()
 
         def OnReceiveMessage(self, systemError, messageCode, message):
             self.log(Logger.DEBUG, "OnReceiveMessage: systemError({}), messageCode({}), message({})".format(systemError, messageCode, message))
 
+        def waitData(self):
+            while not self.__signal.acquire(False):
+                time.sleep(0.1)
+                pythoncom.PumpWaitingMessages()
+
     def _checkDatabase(self):
         db_name = '{}.db'.format(os.path.splitext(sys.argv[0])[0])
-        return os.path.isfile(db_name)
+        if not os.path.isfile(db_name):
+            return False
+
+        try:
+            self.__conn = sqlite3.connect(db_name)
+            self.__cur = self.__conn.cursor()
+
+            sqlcommand = "SELECT name FROM sqlite_master WHERE type='table' AND name='{}'".format(XADatabaseDay.STOCK_CODE)
+
+            result = self.__cur.execute(sqlcommand)
+
+            if not result:
+                return False
+
+            return True
+        finally:
+            self.__conn.close()
 
     def _openDatabase(self):
         db_name = '{}.db'.format(os.path.splitext(sys.argv[0])[0])
@@ -606,28 +781,37 @@ class XADatabaseDay(Logger):
         self.__cur.execute(sqlcommand)
         self.__conn.commit()
 
-    def _updateDatabase(self):
-        today           = datetime.date.today()
-        days_to_request = (today - XADatabaseDay.BEGINNING).days
-
+    def updateDatabase(self):
         if not self._checkDatabase():
-            print('createDatabase')
+            self.log(Logger.INFO, "Database does not exist. Creating one.")
             self._createDatabase()
         else:
+            self.log(Logger.INFO, "Database exists. Opening it")
             self._openDatabase()
 
+        last_data = self.lastData()
+
+        if not last_data:
+            last_date = XADatabaseDay.BEGINNING
+        else:
+            last_date = datetime.datetime.strptime(last_data.date, "%Y%m%d").date()
+
+        days_to_request = int((datetime.date.today() - last_date).days * (5.0/7.0) + 7)
+
         self.__xaquery = win32com.client.DispatchWithEvents("XA_DataSet.XAQuery", XADatabaseDay.XAQueryEvents)
+        self.__xaquery.postInitialize()
         self.__xaquery.LoadFromResFile(os.path.join(RES_DIRECTORY, 't1305.res'))
         self.__xaquery.SetFieldData('t1305InBlock', 'shcode', NO_OCCURS, XADatabaseDay.STOCK_CODE)
         self.__xaquery.SetFieldData('t1305InBlock', 'dwmcode', NO_OCCURS, 1)
         self.__xaquery.SetFieldData('t1305InBlock', 'cnt', NO_OCCURS, days_to_request)
         self.__xaquery.Request(0)
-        print('request done')
 
-        while not self.__xaquery.ondata:
-            pythoncom.PumpWaitingMessages()
+        self.log(Logger.INFO, "Requested data of {} days".format(days_to_request))
 
-        print('received')
+        self.__xaquery.waitData()
+
+        self.log(Logger.INFO, "Data received")
+
         for i in range(0, days_to_request):
             val_date            = self.__xaquery.GetFieldData("t1305OutBlock1", "date",       i)
             val_open            = self.__xaquery.GetFieldData("t1305OutBlock1", "open",       i)
@@ -657,8 +841,6 @@ class XADatabaseDay(Logger):
             val_l_change        = self.__xaquery.GetFieldData("t1305OutBlock1", "l_change",   i)
             val_l_diff          = self.__xaquery.GetFieldData("t1305OutBlock1", "l_diff",     i)
             val_marketcap       = self.__xaquery.GetFieldData("t1305OutBlock1", "marketcap",  i)
-
-            print('{}'.format(val_date))
 
             date = datetime.datetime.strptime(val_date, "%Y%m%d").date()
 
@@ -723,10 +905,28 @@ class XADatabaseDay(Logger):
                                      val_l_diff,
                                      val_marketcap)
 
-                print(sqlcommand)
                 self.__cur.execute(sqlcommand)
+                self.log(Logger.INFO, "Inserted {} data into database".format(val_date))
 
             self.__conn.commit()
+
+    def lastData(self):
+        sqlcommand = "SELECT * FROM t1305_{} ORDER BY date DESC LIMIT 1".format(XADatabaseDay.STOCK_CODE)
+        self.__cur.execute(sqlcommand)
+        result = self.__cur.fetchone()
+
+        if not result:
+            return None
+
+        return XAData_t1305(result)
+
+    def data(self, date):
+        date_string = datetime.datetime.strftime(date, "%Y%m%d")
+        sqlcommand = "SELECT * FROM t1305_{} WHERE date LIKE {}".format(XADatabaseDay.STOCK_CODE, date_string)
+        self.__cur.execute(sqlcommand)
+        result = self.__cur.fetchone()
+        return XAData_t1305(result)
+
 
 
 def main():
