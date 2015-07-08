@@ -40,7 +40,7 @@ def setup_logger():
 
     logger = logging.getLogger()
 
-    formatter = logging.Formatter(fmt='%(asctime)s (%(levelname)s) %(message)s', datefmt='%Y%m%d %H:%M:%S')
+    formatter = logging.Formatter(fmt='%(asctime)s (%(levelname)5s) %(message)s', datefmt='%Y%m%d %H:%M:%S')
 
     file_handler   = logging.FileHandler('{}.log'.format(os.path.splitext(sys.argv[0])[0]))
     stream_handler = logging.StreamHandler()
@@ -162,12 +162,7 @@ class Logger(object):
         super(Logger, self).__init__()
 
     def log(self, level, message):
-        logger.log(level, '{}: {}'.format(self.__class__.__name__, message))
-
-    'FIXME - method name'
-    @classmethod
-    def log2(cls, level, message, classname):
-        logger.log(level, '{}: {}'.format(classname, message))
+        logger.log(level, '{:<16s}: {}'.format(self.__class__.__name__, message))
 
 
 class XAScheduler(Logger):
@@ -183,13 +178,13 @@ class XAScheduler(Logger):
         self.__runnables.append(runnable)
 
     @classmethod
-    def registerTimer(cls, target, parameter, seconds):
-        Logger.log2(Logger.DEBUG, 'Registering timer for {} after {} seconds'.format(target, seconds), target)
-        XAScheduler.__timers.append((time.time(), target, parameter, seconds))
+    def registerTimer(cls, runnable, parameter, seconds):
+        runnable.log(Logger.DEBUG, 'Registering {} seconds timer'.format(seconds))
+        XAScheduler.__timers.append((time.time(), runnable, parameter, seconds))
 
     @classmethod
     def sendMessage(cls, target, message, outparam, inparam, sender):
-        Logger.log2(Logger.DEBUG, 'Send message to {} from {}: msg({})'.format(target, sender, message), sender)
+        sender.log(Logger.DEBUG, 'MSG Snd: to({}): msg({})'.format(target.__class__.__name__, message))
         XAScheduler.__message_queue.put((target, message, outparam, inparam, sender))
 
     def run(self):
@@ -197,16 +192,16 @@ class XAScheduler(Logger):
             while len(self.__runnables):
                 for runnable in list(self.__runnables):
                     if      runnable.state  ==  XARunnable.STAT_INIT:
-                        self.log(Logger.DEBUG, 'Starting {}'.format(runnable))
+                        self.log(Logger.DEBUG, 'MSG Rev: target({}), msg({})'.format(runnable.__class__.__name__, XARunnable.MSG_STARTED))
                         runnable.onMessage(XARunnable.MSG_STARTED, None, None, self)
                         runnable.state = XARunnable.STAT_RUNNING
 
                     elif    runnable.state  ==  XARunnable.STAT_PAUSED:
-                        self.log(Logger.DEBUG, 'Pausing {}'.format(runnable))
+                        self.log(Logger.DEBUG, 'MSG Rev: target({}), msg({})'.format(runnable.__class__.__name__, XARunnable.MSG_PAUSED))
                         runnable.onMessage(XARunnable.MSG_PAUSED, None, None, self)
 
                     elif    runnable.state  ==  XARunnable.STAT_STOPPED:
-                        self.log(Logger.DEBUG, 'Stopping {}'.format(runnable))
+                        self.log(Logger.DEBUG, 'MSG Rev: target({}), msg({})'.format(runnable.__class__.__name__, XARunnable.MSG_STOPPED))
                         runnable.onMessage(XARunnable.MSG_STOPPED, None, None, self)
                         runnable.state = XARunnable.STAT_DEAD
                         self.__runnables.remove(runnable)
@@ -219,7 +214,7 @@ class XAScheduler(Logger):
 
                 try:
                     (target, message, outparam, inparam, sender) = XAScheduler.__message_queue.get(False)
-                    self.log(Logger.DEBUG, 'MSG: target({}), msg({})'.format(target.__class__.__name__, message))
+                    self.log(Logger.DEBUG, 'MSG Rev: to({}), msg({})'.format(target.__class__.__name__, message))
                     target.onMessage(message, outparam, inparam, sender)
                 except Empty:
                     pythoncom.PumpWaitingMessages()
@@ -312,9 +307,6 @@ class XAStrategyBase(XARunnable):
                 return
 
             self.__feeder.startFeed()
-            success = self.__feeder.nextFeed(self, None)
-            if not success:
-                self.log(Logger.ERROR, "Data feeding failed.")
         elif message == XASessionEvents.MSG_LOGGED_OUT:
             pass
         elif message == XASessionEvents.MSG_DISCONNECTED:
