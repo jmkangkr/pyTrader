@@ -62,7 +62,7 @@ def setup_logger():
 
 def valid_date(s):
     try:
-        date_parsed = datetime.datetime.strptime(s, "%Y%m%d")
+        date_parsed = datetime.datetime.strptime(s, "%Y%m%d").date()
     except ValueError:
         return None
 
@@ -184,7 +184,7 @@ class XAScheduler(Logger):
 
     @classmethod
     def sendMessage(cls, target, message, outparam, inparam, sender):
-        sender.log(Logger.DEBUG, 'MSG Snd: to({}): msg({})'.format(target.__class__.__name__, message))
+        sender.log(Logger.DEBUG, 'MSG Snd: to({}), msg({})'.format(target.__class__.__name__, message))
         XAScheduler.__message_queue.put((target, message, outparam, inparam, sender))
 
     def run(self):
@@ -208,7 +208,7 @@ class XAScheduler(Logger):
 
                 for timer in list(XAScheduler.__timers):
                     (trigger, target, parameter, seconds) = timer
-                    if seconds >= (time.time() - trigger):
+                    if seconds <= (time.time() - trigger):
                         XAScheduler.__timers.remove(timer)
                         XAScheduler.sendMessage(target, XARunnable.MSG_TIMER, None, parameter, self)
 
@@ -307,6 +307,8 @@ class XAStrategyBase(XARunnable):
                 return
 
             self.__feeder.startFeed()
+            self.__feeder.nextFeed(self, None)
+
         elif message == XASessionEvents.MSG_LOGGED_OUT:
             pass
         elif message == XASessionEvents.MSG_DISCONNECTED:
@@ -318,8 +320,6 @@ class XAStrategyBase(XARunnable):
                 print('End of feeding')
             else:
                 print(dataset.date)
-
-            if not dataset:
                 success = self.__feeder.nextFeed(self, None)
                 if not success:
                     self.log(Logger.ERROR, "Data feeding failed.")
@@ -530,6 +530,7 @@ class XADataFeederDay(XADataFeederBase):
         self.__current = None
         self.__database = None
         self.__fetcher = None
+        self.__databaseUpdated = False
 
     def startFeed(self):
         self.log(Logger.INFO, "XADataFeederDay:startFeed called")
@@ -537,13 +538,17 @@ class XADataFeederDay(XADataFeederBase):
         self.__database = XADatabaseDay([self.__stock])
         self.__fetcher = XADataFetcherDay()
 
-        self.__database.updateDatabase()
-
-        self.__database.initFetch(self.__stock, self.__start)
+        self.__database.updateDatabase(self, None)
+        self.__databaseUpdated = False
         return self
 
     def nextFeed(self, callback, param):
         self.log(Logger.INFO, "XADataFeederDay:nextFeed called")
+
+        if not self.__databaseUpdated:
+            self.sleep(1, (callback, param))
+            return True
+
         if self.__current > self.__end:
             self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, None, param)
             return True
@@ -551,7 +556,7 @@ class XADataFeederDay(XADataFeederBase):
         dataset = self.__database.fetch()
 
         if dataset:
-            date = datetime.datetime.strptime(dataset.date, "%Y%m%d")
+            date = datetime.datetime.strptime(dataset.date, "%Y%m%d").date()
             self.__current = date + datetime.timedelta(days=1)
             if date > self.__end:
                 self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, None, param)
@@ -563,6 +568,7 @@ class XADataFeederDay(XADataFeederBase):
         days_to_request = int((datetime.date.today() - self.__current).days * (XADatabaseDay.WEEKDAYS_IN_WEEK / XADatabaseDay.DAYS_IN_WEEK) + XADatabaseDay.DAYS_IN_WEEK)
         success = self.__fetcher.fetch(self.__stock, days_to_request, self, (callback, param))
         if not success:
+            self.log(Logger.ERROR, 'Data feed error')
             return False
 
         return True
@@ -591,10 +597,17 @@ class XADataFeederDay(XADataFeederBase):
 
             self.log(Logger.INFO, "Data is not available. Waiting some time and will try it later. Sleeping.")
             self.sleep(3600, (callback, param))
-
+        elif message == XADataFetcherDay.MSG_DATA_FETCHED:
+            print('fetched')
+        elif message == XADatabaseDay.MSG_DATABASE_UPDATED:
+            self.__databaseUpdated = True
+            self.__database.initFetch(self.__stock, self.__start)
         elif message == XARunnable.MSG_TIMER:
+            print(message)
             (callback, param) = inparam
-            self.nextFeed(callback, param)
+            success = self.nextFeed(callback, param)
+            if not success:
+                self.log(Logger.ERROR, 'Data feed error')
 
 
 class XAQueryEvents(Logger):
@@ -707,6 +720,7 @@ class XADataFetcherDay(XARunnable):
 
 
 class XADatabaseDay(XARunnable):
+    MSG_DATABASE_UPDATED = 'MSG_DATABASE_UPDATED'
     BEGINNING = datetime.date(2008, 1, 1)
     DAYS_IN_WEEK = 7.0
     WEEKDAYS_IN_WEEK = 5.0
@@ -756,7 +770,7 @@ class XADatabaseDay(XARunnable):
             self.__cur.execute(sqlcommand)
         self.__conn.commit()
 
-    def updateDatabase(self):
+    def updateDatabase(self, callback, param):
         self.log(Logger.INFO, "XADatabaseDay:updateDatabase called")
 
         self._createDatabase()
@@ -773,7 +787,7 @@ class XADatabaseDay(XARunnable):
 
             self.log(Logger.INFO, "Updating database - stock({}), last date({}), requesting {} days of data".format(stock, last_date, days_to_request))
 
-            success = self.__fetcher.fetch(stock, days_to_request, self, (stock, days_to_request))
+            success = self.__fetcher.fetch(stock, days_to_request, self, (stock, days_to_request, callback, param))
 
             if not success:
                 self.log(Logger.ERROR, "fetch failed")
@@ -781,7 +795,7 @@ class XADatabaseDay(XARunnable):
     def onMessage(self, message, outparam, inparam, sender):
         if message == XADataFetcherDay.MSG_DATA_FETCHED:
             datasets = outparam
-            (stock, days_to_request) = inparam
+            (stock, days_to_request, callback, param) = inparam
 
             insert_count = 0
             for dataset in datasets:
@@ -793,6 +807,8 @@ class XADatabaseDay(XARunnable):
                         insert_count += 1
             self.log(Logger.INFO, "{} row inserted".format(insert_count))
             self.__conn.commit()
+
+            self.sendMessage(callback, XADatabaseDay.MSG_DATABASE_UPDATED, None, param)
 
     def __lastData(self, stock):
         sqlcommand = "SELECT * FROM t1305_{} ORDER BY date DESC LIMIT 1".format(stock)
