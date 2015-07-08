@@ -23,7 +23,6 @@ import sys
 import datetime
 import os
 import sqlite3
-import threading
 import time
 
 
@@ -34,24 +33,6 @@ RES_DIRECTORY   = "C:\\eBEST\\xingAPI\\Res"
 NO_OCCURS       = 0
 
 logger          = None
-
-def simple_encode(key, clear):
-    enc = []
-    for i in range(len(clear)):
-        key_c = key[i % len(key)]
-        enc_c = chr((ord(clear[i]) + ord(key_c)) % 256)
-        enc.append(enc_c)
-    encoded = "".join(enc)
-    return encoded
-
-
-def simple_decode(key, enc):
-    dec = []
-    for i in range(len(enc)):
-        key_c = key[i % len(key)]
-        dec_c = chr((256 + ord(enc[i]) - ord(key_c)) % 256)
-        dec.append(dec_c)
-    return "".join(dec)
 
 
 def setup_logger():
@@ -73,8 +54,8 @@ def setup_logger():
     #logging_level = logging.CRITICAL
     #logging_level = logging.ERROR
     #logging_level = logging.WARNING
-    logging_level = logging.INFO
-    #logging_level = logging.DEBUG
+    #logging_level = logging.INFO
+    logging_level = logging.DEBUG
 
     logger.setLevel(logging_level)
 
@@ -86,6 +67,24 @@ def valid_date(s):
         return None
 
     return date_parsed
+
+def simple_encode(key, clear):
+    enc = []
+    for i in range(len(clear)):
+        key_c = key[i % len(key)]
+        enc_c = chr((ord(clear[i]) + ord(key_c)) % 256)
+        enc.append(enc_c)
+    encoded = "".join(enc)
+    return encoded
+
+
+def simple_decode(key, enc):
+    dec = []
+    for i in range(len(enc)):
+        key_c = key[i % len(key)]
+        dec_c = chr((256 + ord(enc[i]) - ord(key_c)) % 256)
+        dec.append(dec_c)
+    return "".join(dec)
 
 
 def encrypt_login_information():
@@ -152,62 +151,6 @@ optional arguments:
     return (start_date, end_date)
 
 
-class XASessionEvents(Logger):
-    LOGGED_ON           = "LOGGED ON"
-    LOGGED_ON_FAILED    = "LOGGED ON FAILED"
-    LOGGED_OUT          = "LOGGED OUT"
-    DISCONNECTED        = "DISCONNECTED"
-
-    def __init__(self):
-        super(XASessionEvents, self).__init__()
-        self.__queue = None
-
-    def setEXAventDrivenRunnable(self, runnable):
-        self.__queue = runnable
-
-    def OnLogin(self, errorCode, errorDesc):
-        self.log(Logger.INFO, 'OnLogin')
-        if errorCode != '0000':
-            self.log(Logger.ERROR, "Login failed: {}".format(errorDesc))
-            self.__queue.sendMessage(XASessionEvents.LOGGED_ON_FAILED, None)
-        else:
-            self.__queue.sendMessage(XASessionEvents.LOGGED_ON, None)
-
-    def OnLogout(self):
-        self.log(Logger.INFO, 'OnLogout')
-        self.__queue.sendMessage(XASessionEvents.LOGGED_OUT)
-
-    def OnDisconnect(self):
-        self.log(Logger.INFO, 'OnDisconnect')
-        self.__queue.sendMessage(XASessionEvents.DISCONNECTED)
-
-
-class XAQueryEvents(Logger):
-    DATA_RECEIVED = "DATA RECEIVED"
-
-    def __init__(self):
-        super(XAQueryEvents, self).__init__()
-        self.__queue = None
-
-    def setXAEvenDrivenRunnable(self, runnable):
-        self.__queue = runnable
-
-    def OnReceiveData(self, szTrCode):
-        self.log(Logger.DEBUG, "OnReceiveData: szTrCode({})".format(szTrCode))
-        self.__queue.sendMessage(XAQueryEvents.DATA_RECEIVED, None)
-
-    def OnReceiveMessage(self, systemError, messageCode, message):
-        self.log(Logger.DEBUG, "OnReceiveMessage: systemError({}), messageCode({}), message({})".format(systemError, messageCode, message))
-    '''
-    def waitData(self):
-        while True:
-            try:
-                return self.__queue.get(False)
-            except Empty:
-                pythoncom.PumpWaitingMessages()
-                time.sleep(0.1)
-    '''
-
 class Logger(object):
     CRITICAL    = logging.CRITICAL
     ERROR       = logging.ERROR
@@ -221,69 +164,93 @@ class Logger(object):
     def log(self, level, message):
         logger.log(level, '{}: {}'.format(self.__class__.__name__, message))
 
+    'FIXME - method name'
+    @classmethod
+    def log2(cls, level, message, classname):
+        logger.log(level, '{}: {}'.format(classname, message))
 
-class Scheduler(Logger):
+
+class XAScheduler(Logger):
+    __message_queue = Queue()
+    __timers = []
+
     def __init__(self):
-        super(Scheduler, self).__init__()
+        super(XAScheduler, self).__init__()
         self.__runnables = []
 
     def registerRunnable(self, runnable):
-        self.log(Logger.DEBUG, 'Adding runnable: {}'.format(runnable))
+        self.log(Logger.DEBUG, 'Registering runnable: {}'.format(runnable))
         self.__runnables.append(runnable)
+
+    @classmethod
+    def registerTimer(cls, target, parameter, seconds):
+        Logger.log2(Logger.DEBUG, 'Registering timer for {} after {} seconds'.format(target, seconds), target)
+        XAScheduler.__timers.append((time.time(), target, parameter, seconds))
+
+    @classmethod
+    def sendMessage(cls, target, message, outparam, inparam, sender):
+        Logger.log2(Logger.DEBUG, 'Send message to {} from {}: msg({})'.format(target, sender, message), sender)
+        XAScheduler.__message_queue.put((target, message, outparam, inparam, sender))
 
     def run(self):
         try:
             while len(self.__runnables):
                 for runnable in list(self.__runnables):
-                    if      runnable.state  ==  Runnable.INIT:
+                    if      runnable.state  ==  XARunnable.STAT_INIT:
+                        self.log(Logger.DEBUG, 'Starting {}'.format(runnable))
+                        runnable.onMessage(XARunnable.MSG_STARTED, None, None, self)
+                        runnable.state = XARunnable.STAT_RUNNING
 
-                        runnable.onStarted()
-                        runnable.state = Runnable.RUNNING
+                    elif    runnable.state  ==  XARunnable.STAT_PAUSED:
+                        self.log(Logger.DEBUG, 'Pausing {}'.format(runnable))
+                        runnable.onMessage(XARunnable.MSG_PAUSED, None, None, self)
 
-                    elif    runnable.state  ==  Runnable.RUNNING:
-
-                        handled = runnable.run()
-                        if not handled:
-                            runnable.onIdle()
-
-                    elif    runnable.state  ==  Runnable.PAUSED:
-
-                        runnable.onPaused()
-
-                    elif    runnable.state  ==  Runnable.STOPPED:
-
-                        runnable.onStopped()
-                        runnable.state = Runnable.DEAD
+                    elif    runnable.state  ==  XARunnable.STAT_STOPPED:
+                        self.log(Logger.DEBUG, 'Stopping {}'.format(runnable))
+                        runnable.onMessage(XARunnable.MSG_STOPPED, None, None, self)
+                        runnable.state = XARunnable.STAT_DEAD
                         self.__runnables.remove(runnable)
+
+                for timer in list(XAScheduler.__timers):
+                    (trigger, target, parameter, seconds) = timer
+                    if seconds >= (time.time() - trigger):
+                        XAScheduler.__timers.remove(timer)
+                        XAScheduler.sendMessage(target, XARunnable.MSG_TIMER, None, parameter, self)
+
+                try:
+                    (target, message, outparam, inparam, sender) = XAScheduler.__message_queue.get(False)
+                    self.log(Logger.DEBUG, 'MSG: target({}), msg({})'.format(target.__class__.__name__, message))
+                    target.onMessage(message, outparam, inparam, sender)
+                except Empty:
+                    pythoncom.PumpWaitingMessages()
 
         except KeyboardInterrupt:
             exit(0)
 
 
-class Runnable(Logger):
-    INIT            = 0
-    RUNNING         = 1
-    PAUSED          = 2
-    STOPPED         = 3
-    DEAD            = 4
+class XARunnable(Logger):
+    STAT_INIT            = 0
+    STAT_RUNNING         = 1
+    STAT_PAUSED          = 2
+    STAT_STOPPED         = 3
+    STAT_DEAD            = 4
+
+    MSG_STARTED     = 'MSG_STARTED'
+    MSG_PAUSED      = 'MSG_PAUSED'
+    MSG_STOPPED     = 'MSG_STOPPED'
+    MSG_TIMER       = 'MSG_TIMER'
 
     def __init__(self):
-        super(Runnable, self).__init__()
-        self._state = Runnable.INIT
+        super(XARunnable, self).__init__()
+        self._state = XARunnable.STAT_INIT
 
-    def onStarted(self):
-        raise NotImplementedError
+    def sendMessage(self, target, message, outparam, inparam):
+        XAScheduler.sendMessage(target, message, outparam, inparam, self)
 
-    def onPaused(self):
-        raise NotImplementedError
+    def sleep(self, seconds, param):
+        XAScheduler.registerTimer(self, param, seconds)
 
-    def onStopped(self):
-        raise NotImplementedError
-
-    def onIdle(self):
-        raise NotImplementedError
-
-    def run(self):
+    def onMessage(self, message, outparam, inparam, sender):
         raise NotImplementedError
 
     @property
@@ -295,227 +262,110 @@ class Runnable(Logger):
         self._state = value
 
 
-class EventDrivenRunnable(Runnable):
+class XASessionEvents(Logger):
+    MSG_LOGGED_ON = 'MSG_LOGGED_ON'
+    MSG_LOGGED_OUT = 'MSG_LOGGED_OUT'
+    MSG_DISCONNECTED = 'MSG_DISCONNECTED'
+
     def __init__(self):
-        super(EventDrivenRunnable, self).__init__()
-        self.__message_queue = Queue()
-        self.__handlers = {}
+        super(XASessionEvents, self).__init__()
+        self.__listener = None
 
-    def addHandler(self, message, handler):
-        self.log(Logger.DEBUG, 'Registering {} for {}'.format(handler, message))
-        self.__handlers[message] = handler
+    def postInitialize(self, listener):
+        self.__listener = listener
 
-    def sendMessage(self, message, parameter):
-        self.log(Logger.INFO, 'sendMessage: {}'.format(message))
-        self.__message_queue.put((message, parameter))
+    def OnLogin(self, errorCode, errorDesc):
+        self.log(Logger.DEBUG, 'XASessionEvents:OnLogin')
+        if errorCode != '0000':
+            self.log(Logger.ERROR, "Login failed: {}".format(errorDesc))
+        XAScheduler.sendMessage(self.__listener, XASessionEvents.MSG_LOGGED_ON, errorCode == '0000', None, self)
 
-    def run(self):
+    def OnLogout(self):
+        self.log(Logger.DEBUG, 'XASessionEvents:OnLogout')
+        XAScheduler.sendMessage(self.__listener, XASessionEvents.MSG_LOGGED_OUT, None, None, self)
+
+    def OnDisconnect(self):
+        self.log(Logger.DEBUG, 'XASessionEvents:OnDisconnect')
+        XAScheduler.sendMessage(self.__listener, XASessionEvents.MSG_DISCONNECTED, None, None, self)
+
+
+class XAStrategyBase(XARunnable):
+    def __init__(self, feeder):
+        super(XAStrategyBase, self).__init__()
+        self.__xasession = None
+        self.__feeder = feeder
+
+    def onMessage(self, message, outparam, inparam, sender):
+        if message == XARunnable.MSG_STARTED:
+            success = self.__login()
+            if not success:
+                self.log(Logger.ERROR, "Login request was not made successfully.")
+        elif message == XARunnable.MSG_PAUSED:
+            pass
+        elif message == XARunnable.MSG_STOPPED:
+            pass
+        elif message == XASessionEvents.MSG_LOGGED_ON:
+            success = outparam
+            if not success:
+                self.log(Logger.ERROR, "Login was not successful. Try it again.")
+                self.__login()
+                return
+
+            self.__feeder.startFeed()
+            success = self.__feeder.nextFeed(self, None)
+            if not success:
+                self.log(Logger.ERROR, "Data feeding failed.")
+        elif message == XASessionEvents.MSG_LOGGED_OUT:
+            pass
+        elif message == XASessionEvents.MSG_DISCONNECTED:
+            pass
+        elif message == XADataFeederDay.MSG_DATA_FED:
+            dataset = outparam
+
+            if not dataset:
+                print('End of feeding')
+            else:
+                print(dataset.date)
+
+            if not dataset:
+                success = self.__feeder.nextFeed(self, None)
+                if not success:
+                    self.log(Logger.ERROR, "Data feeding failed.")
+
+
+    def __login(self):
+        server_addr_demo = "demo.ebestsec.co.kr"
+        server_addr_real = "hts.ebestsec.co.kr"
+        server_port = 20001
+        server_type = 0
+
         try:
-            (message, parameter) = self.__message_queue.get(False)
-            self.log(Logger.DEBUG, 'Message received: {}({})'.format(message, parameter))
-            handler = self.__handlers[message]
-            handler(self, parameter)
-        except Empty:
+            cipher = open('ud', 'rb')
+            encoded = cipher.read()
+            key = getpass.getpass("Enter decryption key: ")
+            decoded = simple_decode(key, encoded.decode('utf-8'))
+            (user_id, user_ps, user_pw) = decoded.split('\t')
+        except IOError:
+            (user_id, user_ps, user_pw) = get_login_information()
+
+        self.__xasession = win32com.client.DispatchWithEvents("XA_Session.XASession", XASessionEvents)
+        self.__xasession.postInitialize(self)
+        success = self.__xasession.ConnectServer(server_addr_real, server_port)
+        if not success:
+            errorCode = self.__xasession.GetLastError()
+            errorDesc = self.__xasession.GetErrorMessage(errorCode)
+            logger.error("Error {}: {}".format(errorCode, errorDesc))
+            return False
+
+        success = self.__xasession.Login(user_id, user_ps, user_pw, server_type, 0)
+
+        if not success:
+            errorCode = self.__xasession.GetLastError()
+            errorDesc = self.__xasession.GetErrorMessage(errorCode)
+            logger.error("Error {}: {}".format(errorCode, errorDesc))
             return False
 
         return True
-
-
-class XAEventDrivenRunnable(EventDrivenRunnable):
-    def __init__(self):
-        super(XAEventDrivenRunnable, self).__init__()
-
-    def onIdle(self):
-        pythoncom.PumpWaitingMessages()
-
-
-class XAEventDrivenRunnableDummy(XAEventDrivenRunnable):
-    def onStarted(self):
-        pass
-
-    def onPaused(self):
-        pass
-
-    def onStopped(self):
-        pass
-
-
-class XAStrategyBase(XAEventDrivenRunnable):
-    LOGGED_ON       = "LOGGED_ON"
-    LOGGED_OUT      = "LOGGED_OUT"
-    DISCONNECTED    = "DISCONNECTED"
-
-    def __init__(self, feeder):
-        super(XAStrategyBase, self).__init__()
-        self.__feeder = feeder
-
-        self.addHandler(XAStrategyBase.LOGGED_ON,    XAStrategyBase.__onLoggedOn)
-        self.addHandler(XAStrategyBase.LOGGED_OUT,   XAStrategyBase.__onLoggedOut)
-        self.addHandler(XAStrategyBase.DISCONNECTED, XAStrategyBase.__onDisconnected)
-
-    def __onLoggedOn(self):
-        self.onLoggedOn()
-
-    def __onLoggedOut(self):
-        self.onLoggedOut()
-
-    def __onDisconnected(self):
-        self.onDisconnected()
-
-    def onLoggedOn(self):
-        raise NotImplementedError
-
-    def onLoggedOut(self):
-        raise NotImplementedError
-
-    def onDisconnected(self):
-        raise NotImplementedError
-
-    def onBar(self, param):
-        raise NotImplementedError
-
-    def onStarted(self):
-        self.log(Logger.INFO, 'onStarted')
-
-        server_addr_demo = "demo.ebestsec.co.kr"
-        server_addr_real = "hts.ebestsec.co.kr"
-        server_port = 20001
-        server_type = 0
-
-        try:
-            cipher = open('ud', 'rb')
-            encoded = cipher.read()
-            key = getpass.getpass("Enter decryption key: ")
-            decoded = simple_decode(key, encoded.decode('utf-8'))
-            (user_id, user_ps, user_pw) = decoded.split('\t')
-        except IOError:
-            (user_id, user_ps, user_pw) = get_login_information()
-
-        self.__xasession = win32com.client.DispatchWithEvents("XA_Session.XASession", XAApplication.XASessionEvents)
-        self.__xasession.postInitialize(self)
-        success = self.__xasession.ConnectServer(server_addr_real, server_port)
-        if not success:
-            errorCode = self.__xasession.GetLastError()
-            errorDesc = self.__xasession.GetErrorMessage(errorCode)
-            logger.error("Error {}: {}".format(errorCode, errorDesc))
-            self.sendMessage(XAApplication.LOGGED_ON, False)
-
-        success = self.__xasession.Login(user_id, user_ps, user_pw, server_type, 0)
-
-        if not success:
-            errorCode = self.__xasession.GetLastError()
-            errorDesc = self.__xasession.GetErrorMessage(errorCode)
-            logger.error("Error {}: {}".format(errorCode, errorDesc))
-            self.sendMessage(XAApplication.LOGGED_ON, False)
-
-        return True
-
-    def onPaused(self):
-        pass
-
-    def onStopped(self):
-        pass
-
-
-class XAApplication(XAMessageQueue):
-    LOGGED_ON       = "LOGGED_ON"
-    LOGGED_OUT      = "LOGGED_OUT"
-    DISCONNECTED    = "DISCONNECTED"
-
-    def __init__(self, strategy, feeder):
-        super(XAApplication, self).__init__()
-        self.__strategy = strategy
-        self.__feeder = feeder
-
-        self.addHandler(XAApplication.LOGGED_ON, XAApplication.onLoggedOn)
-        self.addHandler(XAApplication.LOGGED_OUT, XAApplication.onLoggedOut)
-        self.addHandler(XAApplication.DISCONNECTED, XAApplication.onDisconnected)
-
-    class XASessionEvents(Logger):
-        def __init__(self):
-            super(XAApplication.XASessionEvents, self).__init__()
-            self.__application = None
-
-        def postInitialize(self, application):
-            self.__application = application
-
-        def OnLogin(self, errorCode, errorDesc):
-            self.log(Logger.INFO, 'OnLogin')
-            if errorCode != '0000':
-                self.log(ERROR, "Error {}: {}".format(errorCode, errorDesc))
-            self.__application.sendMessage(XAApplication.LOGGED_ON, errorCode == '0000')
-
-        def OnLogout(self):
-            self.log(Logger.INFO, 'OnLogout')
-            pass
-
-        def OnDisconnect(self):
-            self.log(Logger.INFO, 'OnDisconnect')
-            pass
-
-    def onStarted(self):
-        self.log(Logger.INFO, 'onStarted')
-
-        server_addr_demo = "demo.ebestsec.co.kr"
-        server_addr_real = "hts.ebestsec.co.kr"
-        server_port = 20001
-        server_type = 0
-
-        try:
-            cipher = open('ud', 'rb')
-            encoded = cipher.read()
-            key = getpass.getpass("Enter decryption key: ")
-            decoded = simple_decode(key, encoded.decode('utf-8'))
-            (user_id, user_ps, user_pw) = decoded.split('\t')
-        except IOError:
-            (user_id, user_ps, user_pw) = get_login_information()
-
-        self.__xasession = win32com.client.DispatchWithEvents("XA_Session.XASession", XAApplication.XASessionEvents)
-        self.__xasession.postInitialize(self)
-        success = self.__xasession.ConnectServer(server_addr_real, server_port)
-        if not success:
-            errorCode = self.__xasession.GetLastError()
-            errorDesc = self.__xasession.GetErrorMessage(errorCode)
-            logger.error("Error {}: {}".format(errorCode, errorDesc))
-            self.sendMessage(XAApplication.LOGGED_ON, False)
-
-        success = self.__xasession.Login(user_id, user_ps, user_pw, server_type, 0)
-
-        if not success:
-            errorCode = self.__xasession.GetLastError()
-            errorDesc = self.__xasession.GetErrorMessage(errorCode)
-            logger.error("Error {}: {}".format(errorCode, errorDesc))
-            self.sendMessage(XAApplication.LOGGED_ON, False)
-
-        return True
-
-    def onPaused(self):
-        self.log(Logger.INFO, 'onPaused')
-
-    def onStopped(self):
-        self.log(Logger.INFO, 'onStopped')
-
-    def onLoggedOn(self, success):
-        self.log(Logger.INFO, 'onLoggedOn')
-
-        if not success:
-            self.error('Login failed')
-            return
-
-        db = XADatabaseDay(["000150", "005930"])
-
-        db.updateDatabase()
-
-        exit(0)
-        self.__strategy.onTradeStart()
-        self.__feeder.startFeed()
-
-    def onLoggedOut(self, param):
-        self.log(Logger.INFO, 'onLoggedOut')
-
-    def onDisconnected(self, param):
-        self.log(Logger.INFO, 'onDisconnected')
-
 
 class XAData_t1305(object):
     def __init__(self, data_set):
@@ -666,59 +516,69 @@ class XAData_t1305(object):
         return self.__val_marketcap
 
 
-class XADataFeederBase(XAEventDrivenRunnableDummy):
+class XADataFeederBase(XARunnable):
     def __init__(self):
         super(XADataFeederBase, self).__init__()
 
     def startFeed(self):
         raise NotImplementedError
 
-    def nextFeed(self):
+    def nextFeed(self, callback, param):
         raise NotImplementedError
 
 
 class XADataFeederDay(XADataFeederBase):
+    MSG_DATA_FED = 'MSG_DATA_FED'
+
     def __init__(self, stock, start, end):
         super(XADataFeederDay, self).__init__()
         self.__stock = stock
         self.__start = start
         self.__end = end
         self.__current = None
-        self.__fromDatabase = None
-        self.__database = XADatabaseDay(stocks)
+        self.__database = None
+        self.__fetcher = None
+
+    def startFeed(self):
+        self.log(Logger.INFO, "XADataFeederDay:startFeed called")
+        self.__current = self.__start
+        self.__database = XADatabaseDay([self.__stock])
         self.__fetcher = XADataFetcherDay()
-        self.__strategy = None
 
         self.__database.updateDatabase()
 
-    def setStrategy(self, strategy):
-        self.__strategy = strategy
-
-    def startFeed(self):
-        self.__database.initFetch(stock, self.__start)
-        self.__current = self.__start
-        self.__fromDatabase = True
+        self.__database.initFetch(self.__stock, self.__start)
         return self
 
-    def nextFeed(self):
+    def nextFeed(self, callback, param):
+        self.log(Logger.INFO, "XADataFeederDay:nextFeed called")
         if self.__current > self.__end:
-            raise StopIteration
+            self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, None, param)
+            return True
 
-        if self.__fromDatabase:
-            dataset = self.__database.fetch()
+        dataset = self.__database.fetch()
 
-            if dataset:
-                date = datetime.datetime.strptime(dataset.date, "%Y%m%d")
-                self.__current = date + datetime.timedelta(days=1)
-                if date > self.__end:
-                    raise StopIteration
-                return dataset
+        if dataset:
+            date = datetime.datetime.strptime(dataset.date, "%Y%m%d")
+            self.__current = date + datetime.timedelta(days=1)
+            if date > self.__end:
+                self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, None, param)
+                return True
 
-            self.__fromDatabase = False
+            self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, dataset, param)
+            return True
 
-        while True:
-            days_to_request = int((datetime.date.today() - self.__current).days * (XADatabaseDay.WEEKDAYS_IN_WEEK / XADatabaseDay.DAYS_IN_WEEK) + XADatabaseDay.DAYS_IN_WEEK)
-            datasets = self.__fetcher.fetch(self.__stock, days_to_request)
+        days_to_request = int((datetime.date.today() - self.__current).days * (XADatabaseDay.WEEKDAYS_IN_WEEK / XADatabaseDay.DAYS_IN_WEEK) + XADatabaseDay.DAYS_IN_WEEK)
+        success = self.__fetcher.fetch(self.__stock, days_to_request, self, (callback, param))
+        if not success:
+            return False
+
+        return True
+
+    def onMessage(self, message, outparam, inparam, sender):
+        if message == XADataFeederDay.MSG_DATA_FED:
+            datasets = outparam
+            (callback, param) = inparam
 
             dataset_found = None
             for dataset in datasets:
@@ -731,53 +591,62 @@ class XADataFeederDay(XADataFeederBase):
                 date = datetime.datetime.strptime(dataset_found.date, "%Y%m%d")
                 self.__current = date + datetime.timedelta(days=1)
                 if date > self.__end:
-                    raise StopIteration
-                return dataset_found
+                    self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, None, param)
+                    return
 
-            time.sleep(3600)
+                self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, dataset_found, param)
+                return
+
+            self.log(Logger.INFO, "Data is not available. Waiting some time and will try it later. Sleeping.")
+            self.sleep(3600, (callback, param))
+
+        elif message == XARunnable.MSG_TIMER:
+            (callback, param) = inparam
+            self.nextFeed(callback, param)
 
 
-class XADataFetcherDay(XAEventDrivenRunnableDummy):
-    __DATA_RECEIVED = "XADataFetcherDay:__DATA_RECEIVED"
-    DATA_FETCHED = "XADataFetcherDay:DATA_FETCHED"
+class XAQueryEvents(Logger):
+    MSG_DATA_RECEIVED = 'MSG_DATA_RECEIVED'
+
+    def __init__(self):
+        super(XAQueryEvents, self).__init__()
+        self.__listener = None
+        self.__param = None
+
+    def postInitialize(self, listener, param):
+        self.__listener = listener
+        self.__param = param
+
+    def OnReceiveData(self, szTrCode):
+        self.log(Logger.DEBUG, "XAQueryEvents:OnReceiveData - szTrCode({})".format(szTrCode))
+        XAScheduler.sendMessage(self.__listener, XAQueryEvents.MSG_DATA_RECEIVED, None, self.__param, self)
+
+    def OnReceiveMessage(self, systemError, messageCode, message):
+        self.log(Logger.DEBUG, "XAQueryEvents:OnReceiveMessage - systemError({}), messageCode({}), message({})".format(systemError, messageCode, message))
+
+
+class XADataFetcherDay(XARunnable):
+    MSG_DATA_FETCHED = 'MSG_DATA_FETCHED'
+
     TIME_SENTINEL_ZERO = 0.0
     T1305_REQUEST_TIME_LIMIT = 1.0
 
     def __init__(self):
         super(XADataFetcherDay, self).__init__()
-        self.__xaquery = win32com.client.DispatchWithEvents("XA_DataSet.XAQuery", XAQueryEvents)
-        self.__xaquery.setEXAventDrivenRunnable(self)
         self.__timeLastRequest = XADataFetcherDay.TIME_SENTINEL_ZERO
-        self.__fetchListener = None
-
-        self.addHandler(XADataFetcherDay.__DATA_RECEIVED, XADataFetcherDay.fetchDone)
+        self.__xaQueries = []
 
     def __del__(self):
         pass
 
-    class XAQueryEvents(Logger):
-        def __init__(self):
-            super(XAQueryEvents, self).__init__()
-            self.__queue = None
-
-        def setXAEvenDrivenRunnable(self, runnable):
-            self.__queue = runnable
-
-        def OnReceiveData(self, szTrCode):
-            self.log(Logger.DEBUG, "OnReceiveData: szTrCode({})".format(szTrCode))
-            self.__queue.sendMessage(XADataFetcherDay.__DATA_RECEIVED, None)
-
-        def OnReceiveMessage(self, systemError, messageCode, message):
-            self.log(Logger.DEBUG, "OnReceiveMessage: systemError({}), messageCode({}), message({})".format(systemError, messageCode, message))
-
-    def __waitAndRequest(self):
+    def __waitAndRequest(self, xaquery):
         time_to_sleep = XADataFetcherDay.T1305_REQUEST_TIME_LIMIT - (time.time() - self.__timeLastRequest)
 
         if time_to_sleep > 0:
             self.log(Logger.DEBUG, "Delaying request by {} second".format(time_to_sleep))
             time.sleep(time_to_sleep)
 
-        result = self.__xaquery.Request(0)
+        result = xaquery.Request(0)
         self.__timeLastRequest = time.time()
         if result < 0:
             self.log(Logger.ERROR, "Request error: {}".format(result))
@@ -785,80 +654,83 @@ class XADataFetcherDay(XAEventDrivenRunnableDummy):
 
         return True
 
-    def fetch(self, stock, days, fetchListener):
-        self.__fetchListener = fetchListener
-        self.__xaquery.LoadFromResFile(os.path.join(RES_DIRECTORY, 't1305.res'))
-        self.__xaquery.SetFieldData('t1305InBlock', 'shcode', NO_OCCURS, stock)
-        self.__xaquery.SetFieldData('t1305InBlock', 'dwmcode', NO_OCCURS, 1)
-        self.__xaquery.SetFieldData('t1305InBlock', 'cnt', NO_OCCURS, days)
+    def fetch(self, stock, days, callback, param):
+        self.log(Logger.INFO, 'XADataFetcherDay:fetch called')
+        xaquery = win32com.client.DispatchWithEvents("XA_DataSet.XAQuery", XAQueryEvents)
+        xaquery.postInitialize(self, (stock, days, callback, param))
+        xaquery.LoadFromResFile(os.path.join(RES_DIRECTORY, 't1305.res'))
+        xaquery.SetFieldData('t1305InBlock', 'shcode', NO_OCCURS, stock)
+        xaquery.SetFieldData('t1305InBlock', 'dwmcode', NO_OCCURS, 1)
+        xaquery.SetFieldData('t1305InBlock', 'cnt', NO_OCCURS, days)
 
         self.log(Logger.INFO, "Requesting stock {} data for {} days".format(stock, days))
-        if not self.__waitAndRequest():
+        if not self.__waitAndRequest(xaquery):
             return False
 
+        self.__xaQueries.append(xaquery)
         return True
 
-    def fetchDone(self, param):
-        self.log(Logger.INFO, "Waiting data arrival")
+    def onMessage(self, message, outparam, inparam, sender):
+        if message == XAQueryEvents.MSG_DATA_RECEIVED:
+            (stock, days, callback, param) = inparam
+            xaquery = sender
 
-        datasets = []
+            datasets = []
 
-        for i in range(0, days):
-            val_date            = self.__xaquery.GetFieldData("t1305OutBlock1", "date",       i)
-            val_open            = self.__xaquery.GetFieldData("t1305OutBlock1", "open",       i)
-            val_high            = self.__xaquery.GetFieldData("t1305OutBlock1", "high",       i)
-            val_low             = self.__xaquery.GetFieldData("t1305OutBlock1", "low",        i)
-            val_close           = self.__xaquery.GetFieldData("t1305OutBlock1", "close",      i)
-            val_sign            = self.__xaquery.GetFieldData("t1305OutBlock1", "sign",       i)
-            val_change          = self.__xaquery.GetFieldData("t1305OutBlock1", "change",     i)
-            val_diff            = self.__xaquery.GetFieldData("t1305OutBlock1", "diff",       i)
-            val_volume          = self.__xaquery.GetFieldData("t1305OutBlock1", "volume",     i)
-            val_diff_vol        = self.__xaquery.GetFieldData("t1305OutBlock1", "diff_vol",   i)
-            val_chdegree        = self.__xaquery.GetFieldData("t1305OutBlock1", "chdegree",   i)
-            val_sojinrate       = self.__xaquery.GetFieldData("t1305OutBlock1", "sojinrate",  i)
-            val_changerate      = self.__xaquery.GetFieldData("t1305OutBlock1", "changerate", i)
-            val_fpvolume        = self.__xaquery.GetFieldData("t1305OutBlock1", "fpvolume",   i)
-            val_covolume        = self.__xaquery.GetFieldData("t1305OutBlock1", "covolume",   i)
-            val_shcode          = self.__xaquery.GetFieldData("t1305OutBlock1", "shcode",     i)
-            val_value           = self.__xaquery.GetFieldData("t1305OutBlock1", "value",      i)
-            val_ppvolume        = self.__xaquery.GetFieldData("t1305OutBlock1", "ppvolume",   i)
-            val_o_sign          = self.__xaquery.GetFieldData("t1305OutBlock1", "o_sign",     i)
-            val_o_change        = self.__xaquery.GetFieldData("t1305OutBlock1", "o_change",   i)
-            val_o_diff          = self.__xaquery.GetFieldData("t1305OutBlock1", "o_diff",     i)
-            val_h_sign          = self.__xaquery.GetFieldData("t1305OutBlock1", "h_sign",     i)
-            val_h_change        = self.__xaquery.GetFieldData("t1305OutBlock1", "h_change",   i)
-            val_h_diff          = self.__xaquery.GetFieldData("t1305OutBlock1", "h_diff",     i)
-            val_l_sign          = self.__xaquery.GetFieldData("t1305OutBlock1", "l_sign",     i)
-            val_l_change        = self.__xaquery.GetFieldData("t1305OutBlock1", "l_change",   i)
-            val_l_diff          = self.__xaquery.GetFieldData("t1305OutBlock1", "l_diff",     i)
-            val_marketcap       = self.__xaquery.GetFieldData("t1305OutBlock1", "marketcap",  i)
+            for i in range(0, days):
+                val_date            = xaquery.GetFieldData("t1305OutBlock1", "date",       i)
+                val_open            = xaquery.GetFieldData("t1305OutBlock1", "open",       i)
+                val_high            = xaquery.GetFieldData("t1305OutBlock1", "high",       i)
+                val_low             = xaquery.GetFieldData("t1305OutBlock1", "low",        i)
+                val_close           = xaquery.GetFieldData("t1305OutBlock1", "close",      i)
+                val_sign            = xaquery.GetFieldData("t1305OutBlock1", "sign",       i)
+                val_change          = xaquery.GetFieldData("t1305OutBlock1", "change",     i)
+                val_diff            = xaquery.GetFieldData("t1305OutBlock1", "diff",       i)
+                val_volume          = xaquery.GetFieldData("t1305OutBlock1", "volume",     i)
+                val_diff_vol        = xaquery.GetFieldData("t1305OutBlock1", "diff_vol",   i)
+                val_chdegree        = xaquery.GetFieldData("t1305OutBlock1", "chdegree",   i)
+                val_sojinrate       = xaquery.GetFieldData("t1305OutBlock1", "sojinrate",  i)
+                val_changerate      = xaquery.GetFieldData("t1305OutBlock1", "changerate", i)
+                val_fpvolume        = xaquery.GetFieldData("t1305OutBlock1", "fpvolume",   i)
+                val_covolume        = xaquery.GetFieldData("t1305OutBlock1", "covolume",   i)
+                val_shcode          = xaquery.GetFieldData("t1305OutBlock1", "shcode",     i)
+                val_value           = xaquery.GetFieldData("t1305OutBlock1", "value",      i)
+                val_ppvolume        = xaquery.GetFieldData("t1305OutBlock1", "ppvolume",   i)
+                val_o_sign          = xaquery.GetFieldData("t1305OutBlock1", "o_sign",     i)
+                val_o_change        = xaquery.GetFieldData("t1305OutBlock1", "o_change",   i)
+                val_o_diff          = xaquery.GetFieldData("t1305OutBlock1", "o_diff",     i)
+                val_h_sign          = xaquery.GetFieldData("t1305OutBlock1", "h_sign",     i)
+                val_h_change        = xaquery.GetFieldData("t1305OutBlock1", "h_change",   i)
+                val_h_diff          = xaquery.GetFieldData("t1305OutBlock1", "h_diff",     i)
+                val_l_sign          = xaquery.GetFieldData("t1305OutBlock1", "l_sign",     i)
+                val_l_change        = xaquery.GetFieldData("t1305OutBlock1", "l_change",   i)
+                val_l_diff          = xaquery.GetFieldData("t1305OutBlock1", "l_diff",     i)
+                val_marketcap       = xaquery.GetFieldData("t1305OutBlock1", "marketcap",  i)
 
-            self.log(Logger.DEBUG, "Creating dataset for day {}".format(val_date))
-            dataset = XAData_t1305((val_date, val_open, val_high, val_low, val_close, val_sign, val_change, val_diff, val_volume, val_diff_vol, val_chdegree, val_sojinrate, val_changerate, val_fpvolume, val_covolume, val_shcode, val_value, val_ppvolume, val_o_sign, val_o_change, val_o_diff, val_h_sign, val_h_change, val_h_diff, val_l_sign, val_l_change, val_l_diff, val_marketcap))
-            datasets.append(dataset)
+                dataset = XAData_t1305((val_date, val_open, val_high, val_low, val_close, val_sign, val_change, val_diff, val_volume, val_diff_vol, val_chdegree, val_sojinrate, val_changerate, val_fpvolume, val_covolume, val_shcode, val_value, val_ppvolume, val_o_sign, val_o_change, val_o_diff, val_h_sign, val_h_change, val_h_diff, val_l_sign, val_l_change, val_l_diff, val_marketcap))
+                datasets.append(dataset)
 
-        self.__fetchListener.sendMessage(XADataFetcherDay.DATA_FETCHED, datasets)
+            self.__xaQueries.remove(sender)
+            self.sendMessage(callback, XADataFetcherDay.MSG_DATA_FETCHED, datasets, param)
 
-class XADatabaseDay(XAEventDrivenRunnableDummy):
+
+class XADatabaseDay(XARunnable):
     BEGINNING = datetime.date(2008, 1, 1)
     DAYS_IN_WEEK = 7.0
     WEEKDAYS_IN_WEEK = 5.0
 
     def __init__(self, stocks):
         super(XADatabaseDay, self).__init__()
-        self.__xaquery = None
         self.__stocks = stocks
         self.__conn = sqlite3.connect('{}.db'.format(os.path.splitext(sys.argv[0])[0]))
         self.__cur = self.__conn.cursor()
-
-        self.addHandler(XADataFetcherDay.DATA_FETCHED, updateDatabaseDone)
+        self.__fetcher = XADataFetcherDay()
 
     def __del__(self):
         self.__conn.close()
 
     def _createDatabase(self):
         for stock in self.__stocks:
-            self.log(Logger.INFO, "Creating database for {} if not exists.".format(stock))
             sqlcommand = "CREATE TABLE IF NOT EXISTS t1305_{} ("                       \
                                     "date            TEXT     UNIQUE,   "\
                                     "open            INTEGER,           "\
@@ -893,9 +765,9 @@ class XADatabaseDay(XAEventDrivenRunnableDummy):
         self.__conn.commit()
 
     def updateDatabase(self):
-        self._createDatabase()
+        self.log(Logger.INFO, "XADatabaseDay:updateDatabase called")
 
-        fetcher = XADataFetcherDay()
+        self._createDatabase()
 
         for stock in self.__stocks:
             last_data = self.__lastData(stock)
@@ -907,20 +779,28 @@ class XADatabaseDay(XAEventDrivenRunnableDummy):
 
             days_to_request = int((datetime.date.today() - last_date).days * (XADatabaseDay.WEEKDAYS_IN_WEEK / XADatabaseDay.DAYS_IN_WEEK) + XADatabaseDay.DAYS_IN_WEEK)
 
-            self.log(Logger.INFO, "Updating {} - last date{}, requesting {} days of data".format(stock, last_date, days_to_request))
+            self.log(Logger.INFO, "Updating database - stock({}), last date({}), requesting {} days of data".format(stock, last_date, days_to_request))
 
-            fetcher.fetch(stock, days_to_request, self)
+            success = self.__fetcher.fetch(stock, days_to_request, self, (stock, days_to_request))
 
-    def updateDatabaseDone(self, datasets):
-        for dataset in datasets:
-                date = datetime.datetime.strptime(dataset.date, "%Y%m%d").date()
+            if not success:
+                self.log(Logger.ERROR, "fetch failed")
 
-                if date >= XADatabaseDay.BEGINNING:
-                    sqlcommand = "INSERT OR IGNORE INTO t1305_{} (date, open, high, low, close, sign, change, diff, volume, diff_vol, chdegree, sojinrate, changerate, fpvolume, covolume, shcode, value, ppvolume, o_sign, o_change, o_diff, h_sign, h_change, h_diff, l_sign, l_change, l_diff, marketcap) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})".format(stock, dataset.date, dataset.open, dataset.high, dataset.low, dataset.close, dataset.sign, dataset.change, dataset.diff, dataset.volume, dataset.diff_vol, dataset.chdegree, dataset.sojinrate, dataset.changerate, dataset.fpvolume, dataset.covolume, dataset.shcode, dataset.value, dataset.ppvolume, dataset.o_sign, dataset.o_change, dataset.o_diff, dataset.h_sign, dataset.h_change, dataset.h_diff, dataset.l_sign, dataset.l_change, dataset.l_diff, dataset.marketcap)
-                    self.__cur.execute(sqlcommand)
-                    self.log(Logger.INFO, "Inserting {} data into database".format(dataset.date))
+    def onMessage(self, message, outparam, inparam, sender):
+        if message == XADataFetcherDay.MSG_DATA_FETCHED:
+            datasets = outparam
+            (stock, days_to_request) = inparam
 
-        self.__conn.commit()
+            insert_count = 0
+            for dataset in datasets:
+                    date = datetime.datetime.strptime(dataset.date, "%Y%m%d").date()
+
+                    if date >= XADatabaseDay.BEGINNING:
+                        sqlcommand = "INSERT OR IGNORE INTO t1305_{} (date, open, high, low, close, sign, change, diff, volume, diff_vol, chdegree, sojinrate, changerate, fpvolume, covolume, shcode, value, ppvolume, o_sign, o_change, o_diff, h_sign, h_change, h_diff, l_sign, l_change, l_diff, marketcap) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})".format(stock, dataset.date, dataset.open, dataset.high, dataset.low, dataset.close, dataset.sign, dataset.change, dataset.diff, dataset.volume, dataset.diff_vol, dataset.chdegree, dataset.sojinrate, dataset.changerate, dataset.fpvolume, dataset.covolume, dataset.shcode, dataset.value, dataset.ppvolume, dataset.o_sign, dataset.o_change, dataset.o_diff, dataset.h_sign, dataset.h_change, dataset.h_diff, dataset.l_sign, dataset.l_change, dataset.l_diff, dataset.marketcap)
+                        self.__cur.execute(sqlcommand)
+                        insert_count += 1
+            self.log(Logger.INFO, "{} row inserted".format(insert_count))
+            self.__conn.commit()
 
     def __lastData(self, stock):
         sqlcommand = "SELECT * FROM t1305_{} ORDER BY date DESC LIMIT 1".format(stock)
@@ -944,11 +824,13 @@ class XADatabaseDay(XAEventDrivenRunnableDummy):
         return XAData_t1305(result)
 
     def initFetch(self, stock, start):
+        self.log(Logger.INFO, 'XADatabaseDay:initFetch called')
         date_string = datetime.datetime.strftime(start, "%Y%m%d")
         sqlcommand = "SELECT * FROM t1305_{} WHERE date > {} ORDER BY date ASC".format(stock, date_string)
         return self.__cur.execute(sqlcommand)
 
     def fetch(self):
+        self.log(Logger.INFO, 'XADatabaseDay:fetch called')
         fetched = self.__cur.fetchone()
 
         if not fetched:
@@ -957,21 +839,20 @@ class XADatabaseDay(XAEventDrivenRunnableDummy):
         return XAData_t1305(fetched)
 
 
-
-class MyStrategy(StrategyBase):
-    def __init__(self):
+class MyStrategy(XAStrategyBase):
+    def __init__(self, feeder):
         super(MyStrategy, self).__init__(feeder)
 
-    def onLogin(self):
+    def onLoggedOn(self):
         pass
 
-    def onLogout(self):
+    def onLoggedOut(self):
         pass
 
     def onDisconnected(self):
         pass
 
-    def onBar(self, dataset):
+    def onBar(self, param):
         print(dataset.date)
 
 
@@ -980,16 +861,13 @@ def main():
 
     (start_date, end_date) = preprocess_options()
 
-    sched = Scheduler()
+    sched = XAScheduler()
 
-    feeder = XADataFeederDay(start_date, end_date, "000150")
+    feeder = XADataFeederDay("000150", start_date, end_date)
 
-    strategy = MyStrategy(feeder)
+    strategy = XAStrategyBase(feeder)
 
-    app = XAApplication(strategy, feeder)
-
-    sched.registerRunnable(app)
-    sched.registerRunnable(feeder)
+    sched.registerRunnable(strategy)
 
     sched.run()
 
