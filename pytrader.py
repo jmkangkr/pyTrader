@@ -762,9 +762,7 @@ class XADataFeederDay(XADataFeederBase):
                 return
 
             self.log(Logger.INFO, "Data is not available. Waiting some time and will try it later. Sleeping.")
-            self.sleep(3, (callback, param))
-        elif message == XADataRetrievalDay.MSG_DATA_RETRIEVED:
-            print('retrieved')
+            self.sleep(3600, (callback, param))
         elif message == XARunnable.MSG_TIMER:
             (callback, param) = inparam
             self.nextFeed(callback, param)
@@ -775,6 +773,18 @@ class XAStrategyBase(XARunnable):
         super(XAStrategyBase, self).__init__()
         self.__xasession = None
         self.__feeder = feeder
+
+    def onLoggedOn(self):
+        raise NotImplementedError
+
+    def onLoggedOut(self):
+        raise NotImplementedError
+
+    def onDisconnected(self):
+        raise NotImplementedError
+
+    def onBar(self, dataset):
+        raise NotImplementedError
 
     def onMessage(self, message, outparam, inparam, sender):
         if message == XARunnable.MSG_STARTED:
@@ -794,19 +804,23 @@ class XAStrategyBase(XARunnable):
 
             self.__feeder.startFeed()
             self.__feeder.nextFeed(self, None)
-
+            self.onLoggedOn()
         elif message == XASessionEvents.MSG_LOGGED_OUT:
-            pass
+            self.onLoggedOut()
         elif message == XASessionEvents.MSG_DISCONNECTED:
-            pass
+            self.onDisconnected()
         elif message == XADataFeederDay.MSG_DATA_FED:
             dataset = outparam
+
+            self.onBar(dataset)
 
             if not dataset:
                 print('End of feeding')
             else:
                 print(dataset.date)
                 self.__feeder.nextFeed(self, None)
+
+
 
     def __login(self):
         server_addr_demo = "demo.ebestsec.co.kr"
