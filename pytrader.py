@@ -632,7 +632,7 @@ class XADatabaseDay(XARunnable):
             for dataset in datasets:
                     date = datetime.datetime.strptime(dataset.date, "%Y%m%d").date()
 
-                    if date >= XADatabaseDay.BEGINNING and date <= datetime.date(2015, 7, 1):
+                    if date >= XADatabaseDay.BEGINNING:
                         sqlcommand = "INSERT OR IGNORE INTO t1305_{} (date, open, high, low, close, sign, change, diff, volume, diff_vol, chdegree, sojinrate, changerate, fpvolume, covolume, shcode, value, ppvolume, o_sign, o_change, o_diff, h_sign, h_change, h_diff, l_sign, l_change, l_diff, marketcap) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})".format(stock, dataset.date, dataset.open, dataset.high, dataset.low, dataset.close, dataset.sign, dataset.change, dataset.diff, dataset.volume, dataset.diff_vol, dataset.chdegree, dataset.sojinrate, dataset.changerate, dataset.fpvolume, dataset.covolume, dataset.shcode, dataset.value, dataset.ppvolume, dataset.o_sign, dataset.o_change, dataset.o_diff, dataset.h_sign, dataset.h_change, dataset.h_diff, dataset.l_sign, dataset.l_change, dataset.l_diff, dataset.marketcap)
                         self.__cur.execute(sqlcommand)
                         insert_count += 1
@@ -824,7 +824,7 @@ class XAStrategyBase(XARunnable):
         elif message == XADataFeederDay.MSG_DATA_FED_END:
             success = outparam
 
-            if not success
+            if not success:
                 raise AssertionError
 
             self.onBar(None)
