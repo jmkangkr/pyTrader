@@ -53,14 +53,6 @@ def setup_logger():
     logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
 
-    #logging_level = logging.CRITICAL
-    #logging_level = logging.ERROR
-    #logging_level = logging.WARNING
-    #logging_level = logging.INFO
-    logging_level = logging.DEBUG
-
-    logger.setLevel(logging_level)
-
 
 def valid_date(s):
     try:
@@ -110,16 +102,18 @@ def get_login_information():
 def preprocess_options():
     start_date = None
     end_date = None
+    logging_level = logging.ERROR
 
     help = """\
 usage: {} [-h] [-v] [-s] start_date [end_date]
 
 optional arguments:
-  -h, --help            show this help message and exit
-  -v, --version         show program's version number and exit
-  -s, --login-setup     creates user login data for easy login
-  start_date            trading start date (format YYYYMMDD)
-  end_date              trading end date (format YYYYMMDD)\
+  -h, --help                show this help message and exit
+  -v, --version             show program's version number and exit
+  -s, --login-setup         creates user login data for easy login
+  -lc, -le, -lw, -li, -ld   logging level (CRITICAL, ERROR, WARNING, INFO, DEBUG)
+  start_date                trading start date (format YYYYMMDD)
+  end_date                  trading end date (format YYYYMMDD)\
             """.format(sys.argv[0])
 
     for option in sys.argv[1:]:
@@ -135,6 +129,16 @@ optional arguments:
             encrypt_login_information()
             print("Login data created")
             exit(0)
+        elif option == '-lc':
+            logging_level = logging.CRITICAL
+        elif option == '-le':
+            logging_level = logging.ERROR
+        elif option == '-lw':
+            logging_level = logging.WARNING
+        elif option == '-li':
+            logging_level = logging.INFO
+        elif option == '-ld':
+            logging_level = logging.DEBUG
         else:
             date_parsed = valid_date(option)
             if date_parsed:
@@ -149,6 +153,8 @@ optional arguments:
     if not start_date or not end_date:
         print(help)
         exit(0)
+
+    logger.setLevel(logging_level)
 
     return (start_date, end_date)
 
@@ -685,6 +691,7 @@ class XADataFeederBase(XARunnable):
 
 class XADataFeederDay(XADataFeederBase):
     MSG_DATA_FED = 'MSG_DATA_FED'
+    MSG_DATA_FED_END = 'MSG_DATA_FED_END'
 
     def __init__(self, stock, start, end):
         super(XADataFeederDay, self).__init__()
@@ -714,7 +721,7 @@ class XADataFeederDay(XADataFeederBase):
             return
 
         if self.__current > self.__end:
-            self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, None, param)
+            self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED_END, False, param)
             return
 
         dataset = self.__database.fetch()
@@ -723,7 +730,7 @@ class XADataFeederDay(XADataFeederBase):
             date = datetime.datetime.strptime(dataset.date, "%Y%m%d").date()
             self.__current = date + datetime.timedelta(days=1)
             if date > self.__end:
-                self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, None, param)
+                self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED_END, False, param)
             else:
                 self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, dataset, param)
         else:
@@ -731,7 +738,7 @@ class XADataFeederDay(XADataFeederBase):
             success = self.__server.retrieve(self.__stock, days_to_request, self, (callback, param))
             if not success:
                 self.log(Logger.ERROR, 'Data feed error')
-                self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, None, param)
+                self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED_END, True, param)
 
         return
 
@@ -755,7 +762,7 @@ class XADataFeederDay(XADataFeederBase):
                 date = datetime.datetime.strptime(dataset_found.date, "%Y%m%d").date()
                 self.__current = date + datetime.timedelta(days=1)
                 if date > self.__end:
-                    self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, None, param)
+                    self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED_END, False, param)
                     return
 
                 self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, dataset_found, param)
@@ -769,6 +776,7 @@ class XADataFeederDay(XADataFeederBase):
 
 
 class XAStrategyBase(XARunnable):
+    END_OF_DATA = 0x00000000
     def __init__(self, feeder):
         super(XAStrategyBase, self).__init__()
         self.__xasession = None
@@ -811,15 +819,16 @@ class XAStrategyBase(XARunnable):
             self.onDisconnected()
         elif message == XADataFeederDay.MSG_DATA_FED:
             dataset = outparam
-
             self.onBar(dataset)
+            self.__feeder.nextFeed(self, None)
+        elif message == XADataFeederDay.MSG_DATA_FED_END:
+            success = outparam
 
-            if not dataset:
-                print('End of feeding')
-            else:
-                print(dataset.date)
-                self.__feeder.nextFeed(self, None)
+            if not success
+                raise AssertionError
 
+            self.onBar(None)
+        return
 
 
     def __login(self):
@@ -870,8 +879,11 @@ class MyStrategy(XAStrategyBase):
     def onDisconnected(self):
         pass
 
-    def onBar(self, param):
-        print(dataset.date)
+    def onBar(self, dataset):
+        if dataset:
+            print(dataset.date)
+        else:
+            print("End of data")
 
 
 def main():
@@ -883,7 +895,7 @@ def main():
 
     feeder = XADataFeederDay("000150", start_date, end_date)
 
-    strategy = XAStrategyBase(feeder)
+    strategy = MyStrategy(feeder)
 
     sched.registerRunnable(strategy)
 
