@@ -776,7 +776,6 @@ class XADataFeederDay(XADataFeederBase):
 
 
 class XAStrategyBase(XARunnable):
-    END_OF_DATA = 0x00000000
     def __init__(self, feeder):
         super(XAStrategyBase, self).__init__()
         self.__xasession = None
@@ -822,9 +821,9 @@ class XAStrategyBase(XARunnable):
             self.onBar(dataset)
             self.__feeder.nextFeed(self, None)
         elif message == XADataFeederDay.MSG_DATA_FED_END:
-            success = outparam
+            error = outparam
 
-            if not success:
+            if error:
                 raise AssertionError
 
             self.onBar(None)
@@ -880,10 +879,12 @@ class MyStrategy(XAStrategyBase):
         pass
 
     def onBar(self, dataset):
-        if dataset:
-            print(dataset.date)
-        else:
+        if not dataset:
             print("End of data")
+            return
+
+        print("{} - open({:8}), high({:8}), low({:8}), close({:8}), diff({:3.2f})".format(dataset.date, dataset.open, dataset.high, dataset.low, dataset.close, dataset.diff))
+        return
 
 
 def main():
