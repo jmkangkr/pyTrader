@@ -508,108 +508,6 @@ class XAData_t1305(object):
         return self.__val_marketcap
 
 
-class XADataFeederBase(XARunnable):
-    def __init__(self):
-        super(XADataFeederBase, self).__init__()
-
-    def startFeed(self):
-        raise NotImplementedError
-
-    def nextFeed(self, callback, param):
-        raise NotImplementedError
-
-
-class XADataFeederDay(XADataFeederBase):
-    MSG_DATA_FED = 'MSG_DATA_FED'
-
-    def __init__(self, stock, start, end):
-        super(XADataFeederDay, self).__init__()
-        self.__stock = stock
-        self.__start = start
-        self.__end = end
-        self.__current = None
-        self.__database = None
-        self.__fetcher = None
-        self.__databaseUpdated = False
-
-    def startFeed(self):
-        self.log(Logger.INFO, "XADataFeederDay:startFeed called")
-        self.__current = self.__start
-        self.__database = XADatabaseDay([self.__stock])
-        self.__fetcher = XADataFetcherDay()
-
-        self.__database.updateDatabase(self, None)
-        self.__databaseUpdated = False
-        return self
-
-    def nextFeed(self, callback, param):
-        self.log(Logger.INFO, "XADataFeederDay:nextFeed called")
-
-        if not self.__databaseUpdated:
-            self.sleep(1, (callback, param))
-            return True
-
-        if self.__current > self.__end:
-            self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, None, param)
-            return True
-
-        dataset = self.__database.fetch()
-
-        if dataset:
-            date = datetime.datetime.strptime(dataset.date, "%Y%m%d").date()
-            self.__current = date + datetime.timedelta(days=1)
-            if date > self.__end:
-                self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, None, param)
-                return True
-
-            self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, dataset, param)
-            return True
-
-        days_to_request = int((datetime.date.today() - self.__current).days * (XADatabaseDay.WEEKDAYS_IN_WEEK / XADatabaseDay.DAYS_IN_WEEK) + XADatabaseDay.DAYS_IN_WEEK)
-        success = self.__fetcher.fetch(self.__stock, days_to_request, self, (callback, param))
-        if not success:
-            self.log(Logger.ERROR, 'Data feed error')
-            return False
-
-        return True
-
-    def onMessage(self, message, outparam, inparam, sender):
-        if message == XADataFeederDay.MSG_DATA_FED:
-            datasets = outparam
-            (callback, param) = inparam
-
-            dataset_found = None
-            for dataset in datasets:
-                date = datetime.datetime.strptime(dataset.date, "%Y%m%d")
-                if date >= self.__current:
-                    dataset_found = dataset
-                    break
-
-            if dataset_found:
-                date = datetime.datetime.strptime(dataset_found.date, "%Y%m%d")
-                self.__current = date + datetime.timedelta(days=1)
-                if date > self.__end:
-                    self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, None, param)
-                    return
-
-                self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, dataset_found, param)
-                return
-
-            self.log(Logger.INFO, "Data is not available. Waiting some time and will try it later. Sleeping.")
-            self.sleep(3600, (callback, param))
-        elif message == XADataFetcherDay.MSG_DATA_FETCHED:
-            print('fetched')
-        elif message == XADatabaseDay.MSG_DATABASE_UPDATED:
-            self.__databaseUpdated = True
-            self.__database.initFetch(self.__stock, self.__start)
-        elif message == XARunnable.MSG_TIMER:
-            print(message)
-            (callback, param) = inparam
-            success = self.nextFeed(callback, param)
-            if not success:
-                self.log(Logger.ERROR, 'Data feed error')
-
-
 class XAQueryEvents(Logger):
     MSG_DATA_RECEIVED = 'MSG_DATA_RECEIVED'
 
@@ -630,22 +528,22 @@ class XAQueryEvents(Logger):
         self.log(Logger.DEBUG, "XAQueryEvents:OnReceiveMessage - systemError({}), messageCode({}), message({})".format(systemError, messageCode, message))
 
 
-class XADataFetcherDay(XARunnable):
-    MSG_DATA_FETCHED = 'MSG_DATA_FETCHED'
+class XADataRetrievalDay(XARunnable):
+    MSG_DATA_RETRIEVED = 'MSG_DATA_RETRIEVED'
 
     TIME_SENTINEL_ZERO = 0.0
     T1305_REQUEST_TIME_LIMIT = 1.0
 
     def __init__(self):
-        super(XADataFetcherDay, self).__init__()
-        self.__timeLastRequest = XADataFetcherDay.TIME_SENTINEL_ZERO
+        super(XADataRetrievalDay, self).__init__()
+        self.__timeLastRequest = XADataRetrievalDay.TIME_SENTINEL_ZERO
         self.__xaQueries = []
 
     def __del__(self):
         pass
 
     def __waitAndRequest(self, xaquery):
-        time_to_sleep = XADataFetcherDay.T1305_REQUEST_TIME_LIMIT - (time.time() - self.__timeLastRequest)
+        time_to_sleep = XADataRetrievalDay.T1305_REQUEST_TIME_LIMIT - (time.time() - self.__timeLastRequest)
 
         if time_to_sleep > 0:
             self.log(Logger.DEBUG, "Delaying request by {} second".format(time_to_sleep))
@@ -660,7 +558,7 @@ class XADataFetcherDay(XARunnable):
         return True
 
     def fetch(self, stock, days, callback, param):
-        self.log(Logger.INFO, 'XADataFetcherDay:fetch called')
+        self.log(Logger.INFO, 'XADataRetrievalDay:fetch called')
         xaquery = win32com.client.DispatchWithEvents("XA_DataSet.XAQuery", XAQueryEvents)
         xaquery.postInitialize(self, (stock, days, callback, param))
         xaquery.LoadFromResFile(os.path.join(RES_DIRECTORY, 't1305.res'))
@@ -716,7 +614,7 @@ class XADataFetcherDay(XARunnable):
                 datasets.append(dataset)
 
             self.__xaQueries.remove(sender)
-            self.sendMessage(callback, XADataFetcherDay.MSG_DATA_FETCHED, datasets, param)
+            self.sendMessage(callback, XADataRetrievalDay.MSG_DATA_RETRIEVED, datasets, param)
 
 
 class XADatabaseDay(XARunnable):
@@ -730,7 +628,7 @@ class XADatabaseDay(XARunnable):
         self.__stocks = stocks
         self.__conn = sqlite3.connect('{}.db'.format(os.path.splitext(sys.argv[0])[0]))
         self.__cur = self.__conn.cursor()
-        self.__fetcher = XADataFetcherDay()
+        self.__fetcher = XADataRetrievalDay()
 
     def __del__(self):
         self.__conn.close()
@@ -793,7 +691,7 @@ class XADatabaseDay(XARunnable):
                 self.log(Logger.ERROR, "fetch failed")
 
     def onMessage(self, message, outparam, inparam, sender):
-        if message == XADataFetcherDay.MSG_DATA_FETCHED:
+        if message == XADataRetrievalDay.MSG_DATA_RETRIEVED:
             datasets = outparam
             (stock, days_to_request, callback, param) = inparam
 
@@ -847,6 +745,108 @@ class XADatabaseDay(XARunnable):
         return XAData_t1305(fetched)
 
 
+class XADataFeederBase(XARunnable):
+    def __init__(self):
+        super(XADataFeederBase, self).__init__()
+
+    def startFeed(self):
+        raise NotImplementedError
+
+    def nextFeed(self, callback, param):
+        raise NotImplementedError
+
+
+class XADataFeederDay(XADataFeederBase):
+    MSG_DATA_FED = 'MSG_DATA_FED'
+
+    def __init__(self, stock, start, end):
+        super(XADataFeederDay, self).__init__()
+        self.__stock = stock
+        self.__start = start
+        self.__end = end
+        self.__current = None
+        self.__database = None
+        self.__fetcher = None
+        self.__databaseUpdated = False
+
+    def startFeed(self):
+        self.log(Logger.INFO, "XADataFeederDay:startFeed called")
+        self.__current = self.__start
+        self.__database = XADatabaseDay([self.__stock])
+        self.__fetcher = XADataRetrievalDay()
+
+        self.__database.updateDatabase(self, None)
+        self.__databaseUpdated = False
+        return self
+
+    def nextFeed(self, callback, param):
+        self.log(Logger.INFO, "XADataFeederDay:nextFeed called")
+
+        if not self.__databaseUpdated:
+            self.sleep(1, (callback, param))
+            return True
+
+        if self.__current > self.__end:
+            self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, None, param)
+            return True
+
+        dataset = self.__database.fetch()
+
+        if dataset:
+            date = datetime.datetime.strptime(dataset.date, "%Y%m%d").date()
+            self.__current = date + datetime.timedelta(days=1)
+            if date > self.__end:
+                self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, None, param)
+                return True
+
+            self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, dataset, param)
+            return True
+
+        days_to_request = int((datetime.date.today() - self.__current).days * (XADatabaseDay.WEEKDAYS_IN_WEEK / XADatabaseDay.DAYS_IN_WEEK) + XADatabaseDay.DAYS_IN_WEEK)
+        success = self.__fetcher.fetch(self.__stock, days_to_request, self, (callback, param))
+        if not success:
+            self.log(Logger.ERROR, 'Data feed error')
+            return False
+
+        return True
+
+    def onMessage(self, message, outparam, inparam, sender):
+        if message == XADataFeederDay.MSG_DATA_FED:
+            datasets = outparam
+            (callback, param) = inparam
+
+            dataset_found = None
+            for dataset in datasets:
+                date = datetime.datetime.strptime(dataset.date, "%Y%m%d")
+                if date >= self.__current:
+                    dataset_found = dataset
+                    break
+
+            if dataset_found:
+                date = datetime.datetime.strptime(dataset_found.date, "%Y%m%d")
+                self.__current = date + datetime.timedelta(days=1)
+                if date > self.__end:
+                    self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, None, param)
+                    return
+
+                self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED, dataset_found, param)
+                return
+
+            self.log(Logger.INFO, "Data is not available. Waiting some time and will try it later. Sleeping.")
+            self.sleep(3600, (callback, param))
+        elif message == XADataRetrievalDay.MSG_DATA_RETRIEVED:
+            print('fetched')
+        elif message == XADatabaseDay.MSG_DATABASE_UPDATED:
+            self.__databaseUpdated = True
+            self.__database.initFetch(self.__stock, self.__start)
+        elif message == XARunnable.MSG_TIMER:
+            print(message)
+            (callback, param) = inparam
+            success = self.nextFeed(callback, param)
+            if not success:
+                self.log(Logger.ERROR, 'Data feed error')
+
+                
 class MyStrategy(XAStrategyBase):
     def __init__(self, feeder):
         super(MyStrategy, self).__init__(feeder)
