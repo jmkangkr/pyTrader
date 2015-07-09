@@ -26,7 +26,7 @@ import sqlite3
 import time
 
 
-VERSION = (0, 0)
+VERSION = (0, 1)
 
 
 RES_DIRECTORY   = "C:\\eBEST\\xingAPI\\Res"
@@ -870,13 +870,13 @@ class MyStrategy(XAStrategyBase):
         super(MyStrategy, self).__init__(feeder)
 
     def onLoggedOn(self):
-        pass
+        print('Logged on')
 
     def onLoggedOut(self):
-        pass
+        print('Logged out')
 
     def onDisconnected(self):
-        pass
+        print('Disconnected')
 
     def onBar(self, dataset):
         if not dataset:
