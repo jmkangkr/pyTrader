@@ -336,8 +336,11 @@ class XADataset(object):
 
             return var_names
 
+    def __getitem__(self, index):
+        return self.__vars[index]
 
 
+'''
 class XAData_t1305(object):
     def __init__(self, data_set):
         super(XAData_t1305, self).__init__()
@@ -485,7 +488,7 @@ class XAData_t1305(object):
     @property
     def marketcap(self):
         return self.__val_marketcap
-
+'''
 
 class XAQueryEvents(Logger):
     MSG_DATA_RECEIVED = 'MSG_DATA_RECEIVED'
@@ -589,7 +592,7 @@ class XADataRetrievalDay(XARunnable):
                 val_l_diff          = xaquery.GetFieldData("t1305OutBlock1", "l_diff",     i)
                 val_marketcap       = xaquery.GetFieldData("t1305OutBlock1", "marketcap",  i)
 
-                dataset = XAData_t1305((val_date, val_open, val_high, val_low, val_close, val_sign, val_change, val_diff, val_volume, val_diff_vol, val_chdegree, val_sojinrate, val_changerate, val_fpvolume, val_covolume, val_shcode, val_value, val_ppvolume, val_o_sign, val_o_change, val_o_diff, val_h_sign, val_h_change, val_h_diff, val_l_sign, val_l_change, val_l_diff, val_marketcap))
+                dataset = XADataset('t1305OutBlock1', (val_date, val_open, val_high, val_low, val_close, val_sign, val_change, val_diff, val_volume, val_diff_vol, val_chdegree, val_sojinrate, val_changerate, val_fpvolume, val_covolume, val_shcode, val_value, val_ppvolume, val_o_sign, val_o_change, val_o_diff, val_h_sign, val_h_change, val_h_diff, val_l_sign, val_l_change, val_l_diff, val_marketcap))
                 datasets.append(dataset)
 
             self.__xaQueries.remove(sender)
@@ -658,7 +661,7 @@ class XADatabaseDay(XARunnable):
             if not last_data:
                 last_date = XADatabaseDay.BEGINNING
             else:
-                last_date = datetime.datetime.strptime(last_data.date, "%Y%m%d").date()
+                last_date = datetime.datetime.strptime(last_data['date'], "%Y%m%d").date()
 
             days_to_request = int((datetime.date.today() - last_date).days * (XADatabaseDay.WEEKDAYS_IN_WEEK / XADatabaseDay.DAYS_IN_WEEK) + XADatabaseDay.DAYS_IN_WEEK)
 
@@ -676,10 +679,10 @@ class XADatabaseDay(XARunnable):
 
             insert_count = 0
             for dataset in datasets:
-                    date = datetime.datetime.strptime(dataset.date, "%Y%m%d").date()
+                    date = datetime.datetime.strptime(dataset['date'], "%Y%m%d").date()
 
                     if date >= XADatabaseDay.BEGINNING:
-                        sqlcommand = "INSERT OR IGNORE INTO t1305_{} (date, open, high, low, close, sign, change, diff, volume, diff_vol, chdegree, sojinrate, changerate, fpvolume, covolume, shcode, value, ppvolume, o_sign, o_change, o_diff, h_sign, h_change, h_diff, l_sign, l_change, l_diff, marketcap) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})".format(stock, dataset.date, dataset.open, dataset.high, dataset.low, dataset.close, dataset.sign, dataset.change, dataset.diff, dataset.volume, dataset.diff_vol, dataset.chdegree, dataset.sojinrate, dataset.changerate, dataset.fpvolume, dataset.covolume, dataset.shcode, dataset.value, dataset.ppvolume, dataset.o_sign, dataset.o_change, dataset.o_diff, dataset.h_sign, dataset.h_change, dataset.h_diff, dataset.l_sign, dataset.l_change, dataset.l_diff, dataset.marketcap)
+                        sqlcommand = "INSERT OR IGNORE INTO t1305_{} (date, open, high, low, close, sign, change, diff, volume, diff_vol, chdegree, sojinrate, changerate, fpvolume, covolume, shcode, value, ppvolume, o_sign, o_change, o_diff, h_sign, h_change, h_diff, l_sign, l_change, l_diff, marketcap) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})".format(stock, dataset['date'], dataset['open'], dataset['high'], dataset['low'], dataset['close'], dataset['sign'], dataset['change'], dataset['diff'], dataset['volume'], dataset['diff_vol'], dataset['chdegree'], dataset['sojinrate'], dataset['changerate'], dataset['fpvolume'], dataset['covolume'], dataset['shcode'], dataset['value'], dataset['ppvolume'], dataset['o_sign'], dataset['o_change'], dataset['o_diff'], dataset['h_sign'], dataset['h_change'], dataset['h_diff'], dataset['l_sign'], dataset['l_change'], dataset['l_diff'], dataset['marketcap'])
                         self.__cur.execute(sqlcommand)
                         insert_count += 1
             self.log(Logger.INFO, "{} row inserted".format(insert_count))
@@ -695,7 +698,7 @@ class XADatabaseDay(XARunnable):
         if not result:
             return None
 
-        return XAData_t1305(result)
+        return XADataset('t1305OutBlock1', result)
 
     def data(self, stock, date):
         date_string = datetime.datetime.strftime(date, "%Y%m%d")
@@ -706,7 +709,7 @@ class XADatabaseDay(XARunnable):
         if not result:
             return None
 
-        return XAData_t1305(result)
+        return XADataset('t1305OutBlock1', result)
 
     def initFetch(self, stock, start):
         self.log(Logger.INFO, 'XADatabaseDay:initFetch called')
@@ -721,7 +724,7 @@ class XADatabaseDay(XARunnable):
         if not fetched:
             return None
 
-        return XAData_t1305(fetched)
+        return XADataset('t1305OutBlock1', fetched)
 
 
 class XADataFeederBase(XARunnable):
@@ -773,7 +776,7 @@ class XADataFeederDay(XADataFeederBase):
         dataset = self.__database.fetch()
 
         if dataset:
-            date = datetime.datetime.strptime(dataset.date, "%Y%m%d").date()
+            date = datetime.datetime.strptime(dataset['date'], "%Y%m%d").date()
             self.__current = date + datetime.timedelta(days=1)
             if date > self.__end:
                 self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED_END, False, param)
@@ -799,13 +802,13 @@ class XADataFeederDay(XADataFeederBase):
 
             dataset_found = None
             for dataset in reversed(datasets):
-                date = datetime.datetime.strptime(dataset.date, "%Y%m%d").date()
+                date = datetime.datetime.strptime(dataset['date'], "%Y%m%d").date()
                 if date >= self.__current:
                     dataset_found = dataset
                     break
 
             if dataset_found:
-                date = datetime.datetime.strptime(dataset_found.date, "%Y%m%d").date()
+                date = datetime.datetime.strptime(dataset_found['date'], "%Y%m%d").date()
                 self.__current = date + datetime.timedelta(days=1)
                 if date > self.__end:
                     self.sendMessage(callback, XADataFeederDay.MSG_DATA_FED_END, False, param)
@@ -929,7 +932,7 @@ class MyStrategy(XAStrategyBase):
             print("End of data")
             return
 
-        print("{} - open({:8}), high({:8}), low({:8}), close({:8}), diff({:3.2f})".format(dataset.date, dataset.open, dataset.high, dataset.low, dataset.close, dataset.diff))
+        print("{} - open({:8}), high({:8}), low({:8}), close({:8}), diff({:3.2f})".format(dataset['date'], dataset['open'], dataset['high'], dataset['low'], dataset['close'], dataset['diff']))
         return
 
 
