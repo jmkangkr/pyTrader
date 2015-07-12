@@ -382,6 +382,38 @@ class XAQueryEvents(Logger):
         self.log(Logger.DEBUG, "XAQueryEvents:OnReceiveMessage - systemError({}), messageCode({}), message({})".format(systemError, messageCode, message))
 
 
+class XAServerTransaction(XARunnable):
+    def __init__(self):
+        super(XAServerTransaction, self).__init__(self)
+
+    def request(self, xatype, inputs):
+        res_parser = XAResParser(xatype)
+
+        xaquery = win32com.client.DispatchWithEvents("XA_DataSet.XAQuery", XAQueryEvents)
+        xaquery.postInitialize(self, None)
+        xaquery.LoadFromResFile(os.path.join(RES_DIRECTORY, res_parser.resFileName))
+
+        for index, varName in enumerate(res_parser.varNames):
+            xaquery.SetFieldData(xatype, varName, NO_OCCURS, inputs[index])
+
+        self.__waitAndRequest(self, xaquery)
+
+    def __waitAndRequest(self, xaquery):
+        time_to_sleep = XADataRetrievalDay.T1305_REQUEST_TIME_LIMIT - (time.time() - self.__timeLastRequest)
+
+        if time_to_sleep > 0:
+            self.log(Logger.DEBUG, "Delaying request by {} second".format(time_to_sleep))
+            time.sleep(time_to_sleep)
+
+        result = xaquery.Request(0)
+        self.__timeLastRequest = time.time()
+        if result < 0:
+            self.log(Logger.ERROR, "Request error: {}".format(result))
+            return False
+
+        return True
+
+
 class XADataRetrievalDay(XARunnable):
     MSG_DATA_RETRIEVED = 'MSG_DATA_RETRIEVED'
 
