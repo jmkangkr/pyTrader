@@ -292,6 +292,52 @@ class XASessionEvents(Logger):
         XAScheduler.sendMessage(self.__listener, XASessionEvents.MSG_DISCONNECTED, None, None, self)
 
 
+class XADataset(object):
+    def __init__(self, type, data):
+        super(XADataset, self).__init__()
+        self.__vars = {}
+        filename = type.split('InBlock')[0]
+        filename = filename.split('OutBlock')[0]
+        resfile = os.path.join(RES_DIRECTORY, '{}.res'.format(filename))
+        self.__varNames = self.__parseResFile(type, resfile)
+
+        if len(self.__varNames) != len(data):
+            raise ValueError
+
+        for index, name in enumerate(self.__varNames):
+            self.__vars[name] = data[index]
+
+    def __skipUntil(self, file, seek):
+        skipped = []
+        for line in file:
+            l = (line.split(',')[0]).strip()
+            if l == seek:
+                return skipped
+            skipped.append(line.strip())
+
+        return None
+
+    def __parseResFile(self, type, resfile):
+        with open(resfile, 'r') as res:
+            self.__skipUntil(res, 'BEGIN_DATA_MAP')
+            self.__skipUntil(res, type)
+            self.__skipUntil(res, 'begin')
+            skipped = self.__skipUntil(res, 'end')
+
+            var_names = []
+            for line in skipped:
+                tokens = line.rstrip(';').split(',')
+                desc = tokens[0]
+                var1 = tokens[1]
+                var2 = tokens[2]
+                data_type = tokens[3]
+                precision = tokens[4]
+                var_names.append(var1)
+
+            return var_names
+
+
+
 class XAData_t1305(object):
     def __init__(self, data_set):
         super(XAData_t1305, self).__init__()
