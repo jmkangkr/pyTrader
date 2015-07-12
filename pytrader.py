@@ -292,14 +292,61 @@ class XASessionEvents(Logger):
         XAScheduler.sendMessage(self.__listener, XASessionEvents.MSG_DISCONNECTED, None, None, self)
 
 
+class XAResParser(object):
+    def __init__(self, xatype):
+        super(XAResParser, self).__init__()
+
+        self.__varNames = []
+        self.__varDatatypes = []
+        self.__xatype = xatype
+
+        filename = xatype.split('InBlock')[0]
+        filename = filename.split('OutBlock')[0]
+        res_file_path = os.path.join(RES_DIRECTORY, '{}.res'.format(filename))
+        with open(res_file_path, 'r') as res_file_descriptor:
+            self.__skipUntil(res_file_descriptor, 'BEGIN_DATA_MAP')
+            self.__skipUntil(res_file_descriptor, self.__xatype)
+            self.__skipUntil(res_file_descriptor, 'begin')
+            lines = self.__skipUntil(res_file_descriptor, 'end')
+
+            for line in lines:
+                tokens = line.rstrip(';').split(',')
+                desc = tokens[0]
+                var1 = tokens[1]
+                var2 = tokens[2]
+                data_type = tokens[3]
+                precision = tokens[4]
+
+                self.__varNames.append(var1)
+                self.__varDatatypes.append(data_type)
+
+    def __skipUntil(self, file, seek):
+        skipped = []
+        for line in file:
+            l = (line.split(',')[0]).strip()
+            if l == seek:
+                return skipped
+            skipped.append(line.strip())
+
+        return None
+
+    @property
+    def varNames(self):
+        return self.__varNames
+
+    @property
+    def varDatatypes(self):
+        return self.__varDatatypes
+
+
 class XADataset(object):
-    def __init__(self, type, data):
+    def __init__(self, xatype, data):
         super(XADataset, self).__init__()
         self.__vars = {}
-        filename = type.split('InBlock')[0]
+        filename = xatype.split('InBlock')[0]
         filename = filename.split('OutBlock')[0]
         resfile = os.path.join(RES_DIRECTORY, '{}.res'.format(filename))
-        self.__varNames = self.__parseResFile(type, resfile)
+        self.__varNames = self.__parseResFile(xatype, resfile)
 
         if len(self.__varNames) != len(data):
             raise ValueError
@@ -317,10 +364,10 @@ class XADataset(object):
 
         return None
 
-    def __parseResFile(self, type, resfile):
+    def __parseResFile(self, xatype, resfile):
         with open(resfile, 'r') as res:
             self.__skipUntil(res, 'BEGIN_DATA_MAP')
-            self.__skipUntil(res, type)
+            self.__skipUntil(res, xatype)
             self.__skipUntil(res, 'begin')
             skipped = self.__skipUntil(res, 'end')
 
