@@ -302,7 +302,8 @@ class XAResParser(object):
 
         filename = xatype.split('InBlock')[0]
         filename = filename.split('OutBlock')[0]
-        res_file_path = os.path.join(RES_DIRECTORY, '{}.res'.format(filename))
+        self.__resFileName = '{}.res'.format(filename)
+        res_file_path = os.path.join(RES_DIRECTORY, self.__resFileName)
         with open(res_file_path, 'r') as res_file_descriptor:
             self.__skipUntil(res_file_descriptor, 'BEGIN_DATA_MAP')
             self.__skipUntil(res_file_descriptor, self.__xatype)
@@ -337,6 +338,10 @@ class XAResParser(object):
     @property
     def varDatatypes(self):
         return self.__varDatatypes
+
+    @property
+    def resFileName(self):
+        return self.__resFileName
 
 
 class XADataset(object):
