@@ -342,46 +342,16 @@ class XAResParser(object):
 class XADataset(object):
     def __init__(self, xatype, data):
         super(XADataset, self).__init__()
-        self.__vars = {}
-        filename = xatype.split('InBlock')[0]
-        filename = filename.split('OutBlock')[0]
-        resfile = os.path.join(RES_DIRECTORY, '{}.res'.format(filename))
-        self.__varNames = self.__parseResFile(xatype, resfile)
+
+        res_parser = XAResParser(xatype)
+        self.__varNames = res_parser.varNames
 
         if len(self.__varNames) != len(data):
             raise ValueError
 
+        self.__vars = {}
         for index, name in enumerate(self.__varNames):
             self.__vars[name] = data[index]
-
-    def __skipUntil(self, file, seek):
-        skipped = []
-        for line in file:
-            l = (line.split(',')[0]).strip()
-            if l == seek:
-                return skipped
-            skipped.append(line.strip())
-
-        return None
-
-    def __parseResFile(self, xatype, resfile):
-        with open(resfile, 'r') as res:
-            self.__skipUntil(res, 'BEGIN_DATA_MAP')
-            self.__skipUntil(res, xatype)
-            self.__skipUntil(res, 'begin')
-            skipped = self.__skipUntil(res, 'end')
-
-            var_names = []
-            for line in skipped:
-                tokens = line.rstrip(';').split(',')
-                desc = tokens[0]
-                var1 = tokens[1]
-                var2 = tokens[2]
-                data_type = tokens[3]
-                precision = tokens[4]
-                var_names.append(var1)
-
-            return var_names
 
     def __getitem__(self, index):
         return self.__vars[index]
