@@ -292,60 +292,161 @@ class XASessionEvents(Logger):
         XAScheduler.sendMessage(self.__listener, XASessionEvents.MSG_DISCONNECTED, None, None, self)
 
 
-class XAResParser(object):
-    def __init__(self, xatype):
-        super(XAResParser, self).__init__()
+class Res(object):
+    def __init__(self, resName, resDescription, resAttributes, resBlocks):
+        super(Res, self).__init__()
+        self.__resName = resName
+        self.__resDescription = resDescription
+        self.__resAttributes = resAttributes
+        self.__resBlocks = resBlocks
 
-        self.__varNames = []
-        self.__varDatatypes = []
-        self.__xatype = xatype
+    @property
+    def resName(self):
+        return self.__resName
 
-        baseName = xatype.split('InBlock')[0]
+    @property
+    def resDescription(self):
+        return self.__resDescription
+
+    @property
+    def resAttributes(self):
+        return self.__resAttributes
+
+    @property
+    def resBlocks(self):
+        return self.__resBlocks
+
+    @resBlocks.setter
+    def resBlocks(self, blocks):
+        self.__resBlocks = blocks
+
+    def __str__(self):
+        return '{},{},{}\n{}'.format(self.__resDescription, self.__resName, self.__resAttributes, "".join(map(str, self.__resBlocks)))
+
+    class Block(object):
+        def __init__(self, blockName, blockDescription, blockAttributes, blockVariables):
+            super(Res.Block, self).__init__()
+            self.__blockName = blockName
+            self.__blockDescription = blockDescription
+            self.__blockAttributes = blockAttributes
+            self.__blockVariables = blockVariables
+
+        @property
+        def blockName(self):
+            return self.__blockName
+
+        @property
+        def blockDescription(self):
+            return self.__blockDescription
+
+        @property
+        def blockAttributes(self):
+            return self.__blockAttributes
+
+        @property
+        def blockVariables(self):
+            return self.__blockVariables
+
+        @blockVariables.setter
+        def blockVariables(self, variables):
+            self.__blockVariables = variables
+
+        def __str__(self):
+            return '\t{},{},{}\n{}\n'.format(self.__blockName, self.__blockDescription, self.__blockAttributes, "\n".join(map(str, self.__blockVariables)))
+
+        class Variable(object):
+            def __init__(self, varName, varDescription, varDataType, varDataPrecision):
+                super(Res.Block.Variable, self).__init__()
+                self.__varName = varName
+                self.__varDescription = varDescription
+                self.__varDataType = varDataType
+                self.__varDataPrecision = varDataPrecision
+
+            @property
+            def varName(self):
+                return self.__varName
+
+            @property
+            def varDescription(self):
+                return self.__varDescription
+
+            @property
+            def varDataType(self):
+                return self.__varDataType
+
+            @property
+            def varDataPrecision(self):
+                return self.__varDataPrecision
+
+            def __str__(self):
+                return '\t\t{},{},{},{}'.format(self.__varDescription, self.__varName, self.__varDataType, self.__varDataPrecision)
+
+
+class XAResResources(Logger):
+    __res = {}
+
+    def __init__(self):
+        super(XAResResources, self).__init__()
+
+    def inBlocksOf(self, baseName):
+        return self.__blocksOf(baseName, 'input')
+
+    def outBlocksOf(self, baseName):
+        return self.__blocksOf(baseName, 'output')
+
+    def __blocksOf(self, baseName, attribute):
+        if not baseName in XAResResources.__res:
+            self.__parseResFile(baseName)
+
+        res = XAResResources.__res[baseName]
+
+        blocks = [block for block in res.resBlocks if attribute in block.blockAttributes]
+
+        return blocks
+
+    def baseNameOf(self, blockName):
+        baseName = blockName.split('InBlock')[0]
         baseName = baseName.split('OutBlock')[0]
-        self.__resBaseName = baseName
-        res_file_path = os.path.join(RES_DIRECTORY, '{}.res'.format(self.__resBaseName))
-        with open(res_file_path, 'r') as res_file_descriptor:
-            self.__skipUntil(res_file_descriptor, 'BEGIN_DATA_MAP')
-            self.__skipUntil(res_file_descriptor, self.__xatype)
-            self.__skipUntil(res_file_descriptor, 'begin')
-            lines = self.__skipUntil(res_file_descriptor, 'end')
+        return baseName
 
-            for line in lines:
-                tokens = line.rstrip(';').split(',')
-                desc = tokens[0]
-                var1 = tokens[1]
-                var2 = tokens[2]
-                data_type = tokens[3]
-                precision = tokens[4]
+    def resFileNameOf(self, baseName):
+        return '{}.res'.format(baseName)
 
-                self.__varNames.append(var1)
-                self.__varDatatypes.append(data_type)
+    def __parseResFile(self, baseName):
+        resFilePath = os.path.join(RES_DIRECTORY, self.resFileNameOf(baseName))
+        with open(resFilePath, 'r') as resFileHandle:
+            rawLines = resFileHandle.readlines()
 
-    def __skipUntil(self, file, seek):
-        skipped = []
-        for line in file:
-            l = (line.split(',')[0]).strip()
-            if l == seek:
-                return skipped
-            skipped.append(line.strip())
+        lines = [line.strip().rstrip(';') for line in rawLines if line.strip().rstrip(';')]
 
-        return None
+        blocks = []
+        res = None
+        for i, line in enumerate(lines):
+            marker = line.split(',')[0]
+            if marker == 'BEGIN_DATA_MAP':
+                tokens = lines[i-1].split(',')
+                (func, desc, name, *attributes) = tokens
+                res = Res(name, desc, attributes, None)
+            elif marker == 'begin':
+                tokens = lines[i-1].split(',')
+                (name, desc, *attributes) = tokens
+                block = Res.Block(name, desc, attributes, None)
+                blocks.append(block)
+                beginIndex = i
+            elif marker == 'end':
+                variables = []
+                for lline in lines[beginIndex+1:i]:
+                    tokens = lline.split(',')
+                    (desc, name, name2, type, precision) = tokens
+                    variable = Res.Block.Variable(name, desc, type, precision)
+                    variables.append(variable)
+                block.blockVariables = variables
+            elif marker == 'END_DATA_MAP':
+                res.resBlocks = blocks
+                break
 
-    @property
-    def varNames(self):
-        return self.__varNames
-
-    @property
-    def varDatatypes(self):
-        return self.__varDatatypes
-
-    @property
-    def resFileName(self):
-        return '{}.res'.format(self.__resBaseName)
-
-    @property
-    def resBaseName(self):
-        return self.__resBaseName
+        XAResResources.__res[baseName] = res
+        print(res)
 
 
 class XADataset(object):
@@ -387,35 +488,47 @@ class XAQueryEvents(Logger):
 
 
 class XAServerTransaction(XARunnable):
+    __FORCED_DELAY_BETWEEN_REQUESTS  = {'t1305' : 1.0}
+    __timeOfLastRequest = {}
     def __init__(self):
         super(XAServerTransaction, self).__init__(self)
 
     def request(self, xatype, inputs):
-        res_parser = XAResParser(xatype)
+        if 'InBlock' in xatype:
+            raise ValueError
+
+        resParser = XAResParser(xatype)
+        baseName = resParser.resBaseName
+        varNames = resParser.varNames
+        outBlocks = resParser.outBlocks
+
+        if len(varNames) != len(inputs):
+            raise ValueError
 
         xaquery = win32com.client.DispatchWithEvents("XA_DataSet.XAQuery", XAQueryEvents)
         xaquery.postInitialize(self, None)
-        xaquery.LoadFromResFile(os.path.join(RES_DIRECTORY, res_parser.resFileName))
+        xaquery.LoadFromResFile(os.path.join(RES_DIRECTORY, resParser.resFileName))
 
-        for index, varName in enumerate(res_parser.varNames):
+        for index, varName in enumerate(varNames):
             xaquery.SetFieldData(xatype, varName, NO_OCCURS, inputs[index])
 
-        self.__waitAndRequest(self, xaquery)
+        timeToSleep = XAServerTransaction.__FORCED_DELAY_BETWEEN_REQUESTS[baseName] - (time.time() - self.__timeOfLastRequest[baseName])
 
-    def __waitAndRequest(self, xaquery):
-        time_to_sleep = XADataRetrievalDay.T1305_REQUEST_TIME_LIMIT - (time.time() - self.__timeLastRequest)
-
-        if time_to_sleep > 0:
-            self.log(Logger.DEBUG, "Delaying request by {} second".format(time_to_sleep))
-            time.sleep(time_to_sleep)
+        if timeToSleep > 0:
+            self.log(Logger.DEBUG, "Delaying request by {} second".format())
+            time.sleep(timeToSleep)
 
         result = xaquery.Request(0)
-        self.__timeLastRequest = time.time()
+        self.__timeOfLastRequest[baseName] = time.time()
         if result < 0:
             self.log(Logger.ERROR, "Request error: {}".format(result))
             return False
 
         return True
+
+    def onMessage(self, message, outparam, inparam, sender):
+        if message == XAQueryEvents.MSG_DATA_RECEIVED:
+            xaquery = sender
 
 
 class XADataRetrievalDay(XARunnable):
