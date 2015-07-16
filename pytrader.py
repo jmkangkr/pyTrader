@@ -37,6 +37,15 @@ logger          = None
 class Escape(Exception):
     pass
 
+
+class Singleton(type):
+    _instances = {}
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
+
+
 def setup_logger():
     global logger
 
@@ -382,7 +391,7 @@ class Res(object):
                 return '\t\t{},{},{},{}'.format(self.__varDescription, self.__varName, self.__varDataType, self.__varDataPrecision)
 
 
-class XAResResources(Logger):
+class XAResResources(Logger, metaclass=Singleton):
     __res = {}
 
     def __init__(self):
