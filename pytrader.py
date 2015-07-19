@@ -413,6 +413,16 @@ class XAResResources(Logger, metaclass=Singleton):
 
         return blocks
 
+    def block(self, blockName):
+        baseName = self.baseNameOf(blockName)
+        res = XAResResources.__res[baseName]
+
+        for block in res.resBlocks:
+            if block.blockName == blockName:
+                return block
+
+        raise ValueError
+
     def baseNameOf(self, blockName):
         baseName = blockName.split('InBlock')[0]
         baseName = baseName.split('OutBlock')[0]
@@ -502,24 +512,23 @@ class XAServerTransaction(XARunnable):
     def __init__(self):
         super(XAServerTransaction, self).__init__(self)
 
-    def request(self, xatype, inputs):
-        if 'InBlock' in xatype:
+    def request(self, inBlockName, params):
+        if 'InBlock' in inBlockName:
             raise ValueError
 
-        resParser = XAResParser(xatype)
-        baseName = resParser.resBaseName
-        varNames = resParser.varNames
-        outBlocks = resParser.outBlocks
+        resParser = XAResResources()
+        baseName = resParser.baseNameOf(inBlockName)
+        block = resParser.block(inBlockName)
 
-        if len(varNames) != len(inputs):
+        if len(block.blockVariables) != len(params):
             raise ValueError
 
         xaquery = win32com.client.DispatchWithEvents("XA_DataSet.XAQuery", XAQueryEvents)
         xaquery.postInitialize(self, None)
-        xaquery.LoadFromResFile(os.path.join(RES_DIRECTORY, resParser.resFileName))
+        xaquery.LoadFromResFile(os.path.join(RES_DIRECTORY, resParser.resFileNameOf(baseName)))
 
-        for index, varName in enumerate(varNames):
-            xaquery.SetFieldData(xatype, varName, NO_OCCURS, inputs[index])
+        for index, var in enumerate(block.blockVariables):
+            xaquery.SetFieldData(inBlockName, var.varName, NO_OCCURS, params[index])
 
         timeToSleep = XAServerTransaction.__FORCED_DELAY_BETWEEN_REQUESTS[baseName] - (time.time() - self.__timeOfLastRequest[baseName])
 
